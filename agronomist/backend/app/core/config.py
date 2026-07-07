@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60
     jwt_algorithm: str = "HS256"
 
+    # File uploads
+    upload_dir: str = "uploads"
+    max_image_upload_size_mb: int = 10
+
     # Server
     host: str = "0.0.0.0"
     port: int = 8000

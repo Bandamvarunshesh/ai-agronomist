@@ -16,16 +16,8 @@ class CropImage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "crop_images"
     __table_args__ = (
         CheckConstraint(
-            "latitude IS NULL OR latitude BETWEEN -90 AND 90",
-            name="latitude_range",
-        ),
-        CheckConstraint(
-            "longitude IS NULL OR longitude BETWEEN -180 AND 180",
-            name="longitude_range",
-        ),
-        CheckConstraint(
-            "file_size_bytes IS NULL OR file_size_bytes >= 0",
-            name="file_size_bytes_non_negative",
+            "file_size >= 0",
+            name="file_size_non_negative",
         ),
     )
 
@@ -40,20 +32,15 @@ class CropImage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         index=True,
     )
-    image_url: Mapped[str] = mapped_column(String(2048), nullable=False)
-    storage_key: Mapped[Optional[str]] = mapped_column(String(512), unique=True)
-    content_type: Mapped[Optional[str]] = mapped_column(String(100))
-    file_size_bytes: Mapped[Optional[int]] = mapped_column(BigInteger)
-    captured_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    latitude: Mapped[Optional[Decimal]] = mapped_column(Numeric(9, 6))
-    longitude: Mapped[Optional[Decimal]] = mapped_column(Numeric(9, 6))
-    notes: Mapped[Optional[str]] = mapped_column(Text)
-    image_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "metadata",
-        JSONB,
+    file_path: Mapped[str] = mapped_column(String(2048), nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
         nullable=False,
-        default=dict,
-        server_default=text("'{}'::jsonb"),
+        server_default=func.now(),
+        index=True,
     )
 
     farm: Mapped["Farm"] = relationship(back_populates="crop_images")

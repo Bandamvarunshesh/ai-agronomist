@@ -16,3 +16,19 @@ class FarmNotFoundError(Exception):
 
 class FarmPersistenceError(Exception):
     """Raised when farm data cannot be created, read, updated, or deleted."""
+
+
+class ImageValidationError(Exception):
+    """Raised when an uploaded image fails validation."""
+
+
+class ImageTooLargeError(ImageValidationError):
+    """Raised when an uploaded image exceeds the maximum allowed size."""
+
+
+class ImageStorageError(Exception):
+    """Raised when an uploaded image cannot be written to local storage."""
+
+
+class ImagePersistenceError(Exception):
+    """Raised when image metadata cannot be created or read."""

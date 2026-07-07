@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models.user import User
+from app.services.crop_image_service import CropImageService
 from app.services.farm_service import FarmService
 from app.services.user_service import UserService
 
@@ -77,3 +78,7 @@ def get_current_farmer(current_user: User = Depends(get_current_active_user)) ->
 
 def get_farm_service(db: Session = Depends(get_db)) -> FarmService:
     return FarmService(db)
+
+
+def get_crop_image_service(db: Session = Depends(get_db)) -> CropImageService:
+    return CropImageService(db)

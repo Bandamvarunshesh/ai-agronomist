@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models.user import User
+from app.services.ai_farming_chat_service import AIFarmingChatService
 from app.services.crop_image_service import CropImageService
 from app.services.diagnosis_service import DiagnosisService
 from app.services.farm_service import FarmService
@@ -87,3 +88,9 @@ def get_crop_image_service(db: Session = Depends(get_db)) -> CropImageService:
 
 def get_diagnosis_service(db: Session = Depends(get_db)) -> DiagnosisService:
     return DiagnosisService(db)
+
+
+def get_ai_farming_chat_service(
+    db: Session = Depends(get_db),
+) -> AIFarmingChatService:
+    return AIFarmingChatService(db)

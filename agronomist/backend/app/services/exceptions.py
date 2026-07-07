@@ -56,3 +56,19 @@ class VisionResponseParseError(Exception):
 
 class DiagnosisPersistenceError(Exception):
     """Raised when diagnosis metadata cannot be saved."""
+
+
+class ChatSessionNotFoundError(Exception):
+    """Raised when a chat session does not exist or is not owned by the user."""
+
+
+class ChatPersistenceError(Exception):
+    """Raised when chat sessions or messages cannot be created or read."""
+
+
+class ChatConfigurationError(Exception):
+    """Raised when the configured chat provider cannot be used."""
+
+
+class ChatProviderError(Exception):
+    """Raised when the chat provider request fails."""

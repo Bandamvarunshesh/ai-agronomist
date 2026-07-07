@@ -32,3 +32,23 @@ class CropImageRepository:
             .limit(limit)
         )
         return self.db.execute(statement).scalars().all()
+
+    def get_by_id_for_farm(
+        self,
+        image_id: uuid.UUID,
+        farm_id: uuid.UUID,
+    ) -> CropImage | None:
+        statement = select(CropImage).where(
+            CropImage.id == image_id,
+            CropImage.farm_id == farm_id,
+        )
+        return self.db.execute(statement).scalar_one_or_none()
+
+    def get_latest_by_farm(self, farm_id: uuid.UUID) -> CropImage | None:
+        statement = (
+            select(CropImage)
+            .where(CropImage.farm_id == farm_id)
+            .order_by(CropImage.uploaded_at.desc())
+            .limit(1)
+        )
+        return self.db.execute(statement).scalar_one_or_none()

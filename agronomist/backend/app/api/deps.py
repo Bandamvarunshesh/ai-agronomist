@@ -11,6 +11,7 @@ from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models.user import User
 from app.services.crop_image_service import CropImageService
+from app.services.diagnosis_service import DiagnosisService
 from app.services.farm_service import FarmService
 from app.services.user_service import UserService
 
@@ -82,3 +83,7 @@ def get_farm_service(db: Session = Depends(get_db)) -> FarmService:
 
 def get_crop_image_service(db: Session = Depends(get_db)) -> CropImageService:
     return CropImageService(db)
+
+
+def get_diagnosis_service(db: Session = Depends(get_db)) -> DiagnosisService:
+    return DiagnosisService(db)

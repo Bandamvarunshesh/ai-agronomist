@@ -1,4 +1,10 @@
-from pydantic_settings import BaseSettings
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+REPO_DIR = BACKEND_DIR.parent
 
 
 class Settings(BaseSettings):
@@ -21,13 +27,25 @@ class Settings(BaseSettings):
     upload_dir: str = "uploads"
     max_image_upload_size_mb: int = 10
 
+    # Vision AI
+    gemini_api_key: str = ""
+    vision_provider: str = "gemini"
+    gemini_model: str = "gemini-3.5-flash"
+
     # Server
     host: str = "0.0.0.0"
     port: int = 8000
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    model_config = SettingsConfigDict(
+        env_file=(REPO_DIR / ".env", BACKEND_DIR / ".env"),
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    @property
+    def is_gemini_configured(self) -> bool:
+        return bool(self.gemini_api_key.strip())
 
 
 settings = Settings()

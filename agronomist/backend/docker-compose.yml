@@ -24,6 +24,9 @@ services:
     environment:
       DATABASE_URL: postgresql://${DB_USER:-agronomist}:${DB_PASSWORD:-agronomist_dev}@db:5432/${DB_NAME:-agronomist}
       DEBUG: ${DEBUG:-false}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      VISION_PROVIDER: ${VISION_PROVIDER:-gemini}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
     ports:
       - "8000:8000"
     depends_on:

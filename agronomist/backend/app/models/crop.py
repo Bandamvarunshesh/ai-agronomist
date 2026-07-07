@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Numeric, String, Text, func, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Numeric, String, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -55,8 +55,8 @@ class Diagnosis(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "diagnoses"
     __table_args__ = (
         CheckConstraint(
-            "confidence IS NULL OR confidence BETWEEN 0 AND 1",
-            name="confidence_range",
+            "confidence_score BETWEEN 0 AND 1",
+            name="confidence_score_range",
         ),
     )
 
@@ -76,35 +76,39 @@ class Diagnosis(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         index=True,
     )
-    status: Mapped[str] = mapped_column(
-        String(32),
-        nullable=False,
-        default="pending",
-        server_default=text("'pending'"),
-        index=True,
-    )
-    diagnosis_type: Mapped[Optional[str]] = mapped_column(String(100))
-    crop_name: Mapped[Optional[str]] = mapped_column(String(100))
-    condition_name: Mapped[Optional[str]] = mapped_column(String(255))
-    confidence: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 4))
-    severity: Mapped[Optional[str]] = mapped_column(String(32), index=True)
-    summary: Mapped[Optional[str]] = mapped_column(Text)
-    recommendations: Mapped[list[dict[str, Any]]] = mapped_column(
+    disease_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    confidence_score: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    severity: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    possible_causes: Mapped[list[str]] = mapped_column(
         JSONB,
         nullable=False,
         default=list,
         server_default=text("'[]'::jsonb"),
     )
-    raw_result: Mapped[dict[str, Any]] = mapped_column(
+    organic_treatment: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    chemical_treatment: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    prevention_steps: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    escalate_to_human: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    raw_vision_output: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
         nullable=False,
         default=dict,
         server_default=text("'{}'::jsonb"),
-    )
-    diagnosed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
     )
 
     farm: Mapped["Farm"] = relationship(back_populates="diagnoses")

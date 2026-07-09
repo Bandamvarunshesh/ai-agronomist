@@ -13,8 +13,16 @@ from app.models.user import User
 from app.services.ai_farming_chat_service import AIFarmingChatService
 from app.services.crop_image_service import CropImageService
 from app.services.diagnosis_service import DiagnosisService
+from app.services.escalation_service import EscalationService
 from app.services.farm_service import FarmService
+from app.services.intelligence_service import IntelligenceService
+from app.services.knowledge_service import KnowledgeService
+from app.services.notification_service import NotificationService
+from app.services.recommendation_engine_service import RecommendationEngineService
+from app.services.stage_advisory_service import StageAdvisoryService
+from app.services.timeline_service import TimelineService
 from app.services.user_service import UserService
+from app.services.weather_service import WeatherService
 
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -39,6 +47,13 @@ def farmer_required_error() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Only farmers can manage farms",
+    )
+
+
+def admin_required_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Admin access is required",
     )
 
 
@@ -78,6 +93,12 @@ def get_current_farmer(current_user: User = Depends(get_current_active_user)) ->
     return current_user
 
 
+def get_current_admin(current_user: User = Depends(get_current_active_user)) -> User:
+    if current_user.role != "admin":
+        raise admin_required_error()
+    return current_user
+
+
 def get_farm_service(db: Session = Depends(get_db)) -> FarmService:
     return FarmService(db)
 
@@ -90,7 +111,43 @@ def get_diagnosis_service(db: Session = Depends(get_db)) -> DiagnosisService:
     return DiagnosisService(db)
 
 
+def get_escalation_service(db: Session = Depends(get_db)) -> EscalationService:
+    return EscalationService(db)
+
+
+def get_knowledge_service(db: Session = Depends(get_db)) -> KnowledgeService:
+    return KnowledgeService(db)
+
+
+def get_intelligence_service(db: Session = Depends(get_db)) -> IntelligenceService:
+    return IntelligenceService(db)
+
+
 def get_ai_farming_chat_service(
     db: Session = Depends(get_db),
 ) -> AIFarmingChatService:
     return AIFarmingChatService(db)
+
+
+def get_weather_service(db: Session = Depends(get_db)) -> WeatherService:
+    return WeatherService(db)
+
+
+def get_stage_advisory_service(
+    db: Session = Depends(get_db),
+) -> StageAdvisoryService:
+    return StageAdvisoryService(db)
+
+
+def get_timeline_service(db: Session = Depends(get_db)) -> TimelineService:
+    return TimelineService(db)
+
+
+def get_recommendation_engine_service(
+    db: Session = Depends(get_db),
+) -> RecommendationEngineService:
+    return RecommendationEngineService(db)
+
+
+def get_notification_service(db: Session = Depends(get_db)) -> NotificationService:
+    return NotificationService(db)

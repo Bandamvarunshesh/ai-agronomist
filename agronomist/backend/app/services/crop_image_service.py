@@ -20,6 +20,7 @@ from app.services.exceptions import (
     ImageValidationError,
 )
 from app.services.farm_service import FarmService
+from app.services.timeline_service import TimelineService
 
 
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
@@ -32,6 +33,7 @@ class CropImageService:
         self.db = db
         self.repository = CropImageRepository(db)
         self.farm_service = FarmService(db)
+        self.timeline_service = TimelineService(db)
         self.upload_root = self._resolve_upload_root()
 
     def upload_image(
@@ -65,6 +67,22 @@ class CropImageService:
         self.repository.add(crop_image)
 
         try:
+            self.db.flush()
+            self.timeline_service.add_event(
+                farm_id=farm_id,
+                user_id=user_id,
+                event_type="image_upload",
+                title="Crop image uploaded",
+                description=f"Uploaded {original_filename}",
+                source="image_upload",
+                payload={
+                    "crop_image_id": str(crop_image.id),
+                    "original_filename": original_filename,
+                    "content_type": content_type,
+                    "file_size": file_size,
+                    "file_path": file_path,
+                },
+            )
             self.db.commit()
             self.db.refresh(crop_image)
         except SQLAlchemyError as exc:

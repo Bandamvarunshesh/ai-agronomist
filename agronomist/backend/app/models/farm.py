@@ -61,6 +61,11 @@ class Farm(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    recommendations: Mapped[list["FarmRecommendation"]] = relationship(
+        back_populates="farm",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     crop_stage_calendars: Mapped[list["CropStageCalendar"]] = relationship(
         back_populates="farm",
         cascade="all, delete-orphan",

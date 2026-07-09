@@ -58,7 +58,15 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    notification_preference: Mapped[Optional["NotificationPreference"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     timeline_events: Mapped[list["TimelineEvent"]] = relationship(back_populates="user")
+    farm_recommendations: Mapped[list["FarmRecommendation"]] = relationship(
+        back_populates="user",
+    )
     escalation_contacts: Mapped[list["EscalationContact"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",

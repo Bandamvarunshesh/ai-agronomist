@@ -8,17 +8,24 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models.crop import CropImage, Diagnosis
+from app.models.farm import Farm
 from app.repositories.crop_image_repository import CropImageRepository
 from app.repositories.diagnosis_repository import DiagnosisRepository
 from app.schemas.diagnosis import DiagnosisRequest
 from app.services.exceptions import (
     DiagnosisPersistenceError,
+    EscalationContactPersistenceError,
+    EscalationPersistenceError,
     FarmNotFoundError,
     FarmPersistenceError,
     ImageFileNotFoundError,
     ImageNotFoundError,
+    NotificationPersistenceError,
 )
+from app.services.escalation_service import EscalationService
 from app.services.farm_service import FarmService
+from app.services.notification_generation_service import NotificationGenerationService
+from app.services.timeline_service import TimelineService
 from app.services.vision_service import VisionService
 
 
@@ -31,6 +38,9 @@ class DiagnosisService:
         self.farm_service = FarmService(db)
         self.crop_image_repository = CropImageRepository(db)
         self.diagnosis_repository = DiagnosisRepository(db)
+        self.escalation_service = EscalationService(db)
+        self.notification_generation_service = NotificationGenerationService(db)
+        self.timeline_service = TimelineService(db)
         self.vision_service = VisionService()
 
     def diagnose_farm_image(
@@ -40,7 +50,7 @@ class DiagnosisService:
         farm_id: uuid.UUID,
         diagnosis_in: DiagnosisRequest,
     ) -> Diagnosis:
-        self._ensure_farm_owner(user_id, farm_id)
+        farm = self._ensure_farm_owner(user_id, farm_id)
         crop_image = self._resolve_crop_image(farm_id, diagnosis_in.image_id)
         image_bytes = self._read_image_file(crop_image)
 
@@ -70,17 +80,52 @@ class DiagnosisService:
         self.diagnosis_repository.add(diagnosis)
 
         try:
+            self.db.flush()
+            self.timeline_service.add_event(
+                farm_id=farm_id,
+                user_id=user_id,
+                event_type="diagnosis",
+                title=f"Diagnosis: {diagnosis.disease_name}",
+                description=(
+                    f"{diagnosis.severity} severity with "
+                    f"{diagnosis.confidence_score} confidence"
+                ),
+                source="diagnosis",
+                payload={
+                    "diagnosis_id": str(diagnosis.id),
+                    "crop_image_id": str(crop_image.id),
+                    "disease_name": diagnosis.disease_name,
+                    "severity": diagnosis.severity,
+                    "confidence_score": str(diagnosis.confidence_score),
+                    "escalate_to_human": diagnosis.escalate_to_human,
+                },
+            )
+            self.notification_generation_service.add_for_high_risk_diagnosis(
+                user_id=user_id,
+                farm=farm,
+                diagnosis=diagnosis,
+            )
+            self.escalation_service.create_for_diagnosis_if_needed(
+                user_id=user_id,
+                farm=farm,
+                diagnosis=diagnosis,
+            )
             self.db.commit()
             self.db.refresh(diagnosis)
-        except SQLAlchemyError as exc:
+        except (
+            SQLAlchemyError,
+            NotificationPersistenceError,
+            EscalationContactPersistenceError,
+            EscalationPersistenceError,
+        ) as exc:
             self.db.rollback()
             raise DiagnosisPersistenceError from exc
 
         return diagnosis
 
-    def _ensure_farm_owner(self, user_id: uuid.UUID, farm_id: uuid.UUID) -> None:
+    def _ensure_farm_owner(self, user_id: uuid.UUID, farm_id: uuid.UUID) -> Farm:
         try:
-            self.farm_service.get_farm(user_id, farm_id)
+            return self.farm_service.get_farm(user_id, farm_id)
         except FarmNotFoundError:
             raise
         except FarmPersistenceError as exc:

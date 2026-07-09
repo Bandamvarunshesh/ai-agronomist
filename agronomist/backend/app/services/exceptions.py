@@ -72,3 +72,91 @@ class ChatConfigurationError(Exception):
 
 class ChatProviderError(Exception):
     """Raised when the chat provider request fails."""
+
+
+class WeatherLocationNotFoundError(Exception):
+    """Raised when a farm location cannot be resolved for weather lookup."""
+
+
+class WeatherProviderError(Exception):
+    """Raised when the weather provider request fails."""
+
+
+class WeatherResponseParseError(Exception):
+    """Raised when the weather provider returns invalid or incomplete data."""
+
+
+class StageAdvisoryPersistenceError(Exception):
+    """Raised when stage advisory data cannot be read."""
+
+
+class TimelinePersistenceError(Exception):
+    """Raised when timeline events cannot be created or read."""
+
+
+class NotificationNotFoundError(Exception):
+    """Raised when a notification does not exist or is not owned by the user."""
+
+
+class NotificationPersistenceError(Exception):
+    """Raised when notifications or notification preferences cannot be saved or read."""
+
+
+class EscalationContactNotFoundError(Exception):
+    """Raised when no escalation contact can be found for a farm or filter."""
+
+
+class EscalationContactPersistenceError(Exception):
+    """Raised when escalation contacts cannot be created, updated, or read."""
+
+
+class EscalationValidationError(Exception):
+    """Raised when escalation input references invalid or mismatched records."""
+
+
+class EscalationPersistenceError(Exception):
+    """Raised when escalation records cannot be created or read."""
+
+
+class KnowledgeValidationError(Exception):
+    """Raised when a knowledge document cannot be accepted for ingestion."""
+
+
+class KnowledgeParseError(Exception):
+    """Raised when document text cannot be extracted."""
+
+
+class KnowledgeEmbeddingError(Exception):
+    """Raised when embedding generation fails."""
+
+
+class KnowledgePersistenceError(Exception):
+    """Raised when knowledge documents, versions, chunks, or search cannot be saved/read."""
+
+
+class IntelligenceSourceError(Exception):
+    """Raised when a configured intelligence source cannot be fetched or parsed."""
+
+
+class IntelligencePersistenceError(Exception):
+    """Raised when intelligence sources or articles cannot be saved/read."""
+
+
+class RecommendationContextError(Exception):
+    """Raised when recommendation context cannot be aggregated."""
+
+
+class RecommendationConfigurationError(Exception):
+    """Raised when the configured recommendation provider cannot be used."""
+
+
+class RecommendationProviderError(Exception):
+    """Raised when the recommendation provider request fails."""
+
+
+class RecommendationResponseParseError(Exception):
+    """Raised when the recommendation provider returns invalid JSON."""
+
+
+class RecommendationPersistenceError(Exception):
+    """Raised when recommendations cannot be saved or read."""

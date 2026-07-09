@@ -28,6 +28,8 @@ from app.services.exceptions import (
 )
 from app.services.farm_aware_prompt_builder import FarmAwarePromptBuilder
 from app.services.farm_service import FarmService
+from app.services.knowledge_service import KnowledgeService
+from app.services.timeline_service import TimelineService
 
 
 logger = logging.getLogger(__name__)
@@ -44,7 +46,9 @@ class AIFarmingChatService:
         self.db = db
         self.repository = ChatRepository(db)
         self.farm_service = FarmService(db)
+        self.knowledge_service = KnowledgeService(db)
         self.prompt_builder = FarmAwarePromptBuilder()
+        self.timeline_service = TimelineService(db)
 
     def create_session(
         self,
@@ -60,10 +64,32 @@ class AIFarmingChatService:
             farm_id=session_in.farm_id,
             title=session_in.title,
             channel=session_in.channel,
-            session_metadata={"rag_enabled": False},
+            session_metadata={"rag_enabled": True},
         )
         self.repository.add_session(chat_session)
-        return self._commit_and_refresh(chat_session)
+        try:
+            self.db.flush()
+            if chat_session.farm_id is not None:
+                self.timeline_service.add_event(
+                    farm_id=chat_session.farm_id,
+                    user_id=user_id,
+                    event_type="chat_session",
+                    title="Farming chat session started",
+                    description=chat_session.title,
+                    source="chat",
+                    payload={
+                        "chat_session_id": str(chat_session.id),
+                        "title": chat_session.title,
+                        "channel": chat_session.channel,
+                    },
+                )
+            self.db.commit()
+            self.db.refresh(chat_session)
+        except SQLAlchemyError as exc:
+            self.db.rollback()
+            raise ChatPersistenceError from exc
+
+        return chat_session
 
     def list_messages(
         self,
@@ -96,10 +122,15 @@ class AIFarmingChatService:
             user_id=user.id,
             farm_id=chat_session.farm_id,
         )
+        rag_context, citations = self._get_rag_context(
+            farm=chat_session.farm,
+            user_content=message_in.content,
+        )
         system_instruction = self.prompt_builder.build_system_instruction(
             user=user,
             farm=chat_session.farm,
             recent_diagnoses=recent_diagnoses,
+            rag_context=rag_context,
         )
 
         assistant_content = self._generate_assistant_response(
@@ -125,7 +156,8 @@ class AIFarmingChatService:
             message_metadata={
                 "provider": "gemini",
                 "model": settings.gemini_model,
-                "rag_context_used": False,
+                "rag_context_used": bool(rag_context),
+                "citations": citations,
                 "farm_id": str(chat_session.farm_id) if chat_session.farm_id else None,
                 "recent_diagnosis_ids": [
                     str(diagnosis.id) for diagnosis in recent_diagnoses
@@ -193,6 +225,18 @@ class AIFarmingChatService:
             )
         except SQLAlchemyError as exc:
             raise ChatPersistenceError from exc
+
+    def _get_rag_context(
+        self,
+        *,
+        farm,
+        user_content: str,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        query_parts = [user_content]
+        if farm is not None:
+            query_parts.extend([farm.crop, farm.district, farm.state])
+        query = " ".join(part for part in query_parts if part)
+        return self.knowledge_service.build_rag_context(query=query, limit=5)
 
     def _generate_assistant_response(
         self,

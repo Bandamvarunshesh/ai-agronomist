@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "description": "Template for DB-backed agricultural intelligence sources. Keep sources empty until real approved feeds are configured.",
+  "sources": [],
+  "source_template": {
+    "name": "Replace with approved source name",
+    "source_type": "government_advisory",
+    "source_format": "rss",
+    "url": "https://replace-with-approved-feed-url",
+    "language": "en",
+    "country": "IN",
+    "state": null,
+    "district": null,
+    "crop_tags": [],
+    "credibility_score": 0.9,
+    "is_active": false,
+    "metadata": {
+      "categories": {
+        "irrigation": ["rainfall", "irrigation"],
+        "market": ["market", "price", "arrival"]
+      },
+      "crop_keywords": {},
+      "state_keywords": {},
+      "district_keywords": {},
+      "items_path": "items",
+      "field_map": {
+        "title": "title",
+        "url": "link",
+        "summary": "description",
+        "content": "content",
+        "published_at": "published_at"
+      }
+    }
+  }
+}

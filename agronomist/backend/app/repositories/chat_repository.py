@@ -66,6 +66,27 @@ class ChatRepository:
         messages = self.db.execute(statement).scalars().all()
         return list(reversed(messages))
 
+    def list_recent_messages_for_farm(
+        self,
+        *,
+        user_id: uuid.UUID,
+        farm_id: uuid.UUID,
+        limit: int = 12,
+    ) -> Sequence[ChatMessage]:
+        statement = (
+            select(ChatMessage)
+            .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+            .where(
+                ChatSession.user_id == user_id,
+                ChatSession.farm_id == farm_id,
+                ChatMessage.role.in_(["user", "assistant"]),
+            )
+            .order_by(ChatMessage.sent_at.desc(), ChatMessage.created_at.desc())
+            .limit(limit)
+        )
+        messages = self.db.execute(statement).scalars().all()
+        return list(reversed(messages))
+
     def list_recent_diagnoses_for_user(
         self,
         user_id: uuid.UUID,

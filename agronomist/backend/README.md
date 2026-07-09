@@ -194,3 +194,110 @@ Key variables:
 - `DEBUG` - Enable debug mode
 - `HOST` - Server host
 - `PORT` - Server port
+
+## Phase 14.1: RAG And News Ingestion Verification
+
+### Required Services
+
+- PostgreSQL with the `pgvector` extension available.
+- A valid `GEMINI_API_KEY` for live embedding generation.
+- Real, approved external news/advisory/research/market feed URLs configured in the database or loaded from a source config file.
+
+This project does not seed mock knowledge documents or mock news feeds. The sample source config at `config/intelligence_sources.example.json` is a template with an empty `sources` list.
+
+### Environment
+
+Copy `.env.example` to `.env` and configure:
+
+```bash
+GEMINI_API_KEY=your-gemini-key
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
+EMBEDDING_DIMENSIONS=768
+GEMINI_REQUEST_TIMEOUT_SECONDS=20
+KNOWLEDGE_STORAGE_DIR=knowledge_uploads
+INTELLIGENCE_SOURCE_CONFIG_PATH=config/intelligence_sources.example.json
+INTELLIGENCE_SYNC_ENABLED=false
+```
+
+Run migrations before ingestion:
+
+```bash
+alembic upgrade head
+```
+
+### Health Verification
+
+Check RAG storage and embedding configuration:
+
+```bash
+curl http://localhost:8000/api/v1/health/rag
+```
+
+Run a live Gemini embedding check when network access is available:
+
+```bash
+curl "http://localhost:8000/api/v1/health/embeddings?live_check=true"
+```
+
+If the network is unavailable or the key is missing, the endpoint returns a safe `not_configured` or `unavailable` status with a clear error message. It never returns the API key.
+
+### Document Ingestion Dry Run
+
+Admins can validate document parsing, checksums, duplicate detection, and chunk counts without writing document rows or embeddings:
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/admin/knowledge/documents" \
+  -H "Authorization: Bearer <admin-token>" \
+  -F "file=@/path/to/approved-guide.pdf" \
+  -F "dry_run=true"
+```
+
+Folder dry run:
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/admin/knowledge/documents" \
+  -H "Authorization: Bearer <admin-token>" \
+  -F "folder_path=/path/to/approved-folder" \
+  -F "recursive=true" \
+  -F "dry_run=true"
+```
+
+Set `dry_run=false` only after reviewing the response.
+
+### Semantic Search Verification
+
+After ingesting real documents, verify retrieval:
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/knowledge/search" \
+  -H "Authorization: Bearer <user-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"rice irrigation during flowering","limit":5,"use_hybrid":true}'
+```
+
+When `GEMINI_API_KEY` is configured, the search uses Gemini embeddings plus PostgreSQL full-text ranking. Without the key, it safely falls back to lexical search.
+
+### External News Source Configuration
+
+Create a real source config file from the template and set `INTELLIGENCE_SOURCE_CONFIG_PATH`. Validate it without writing rows:
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/admin/intelligence/sources/load-config?dry_run=true" \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+Persist validated sources:
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/admin/intelligence/sources/load-config?dry_run=false" \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+Verify external source fetch/parse behavior without saving articles:
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/admin/intelligence/sources/sync?dry_run=true" \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+If a source is unreachable, malformed, or blocked by network policy, the dry-run report returns `status: failed` and a clear per-source error.

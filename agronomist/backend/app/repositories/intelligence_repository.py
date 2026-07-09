@@ -3,9 +3,10 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
+from app.models.farm import Farm
 from app.models.intelligence import IntelligenceSource, NewsArticle
 
 
@@ -38,6 +39,16 @@ class IntelligenceRepository:
     def list_active_sources(self) -> Sequence[IntelligenceSource]:
         statement = select(IntelligenceSource).where(
             IntelligenceSource.is_active.is_(True),
+        )
+        return self.db.execute(statement).scalars().all()
+
+    def list_active_sources_for_types(
+        self,
+        source_types: set[str],
+    ) -> Sequence[IntelligenceSource]:
+        statement = select(IntelligenceSource).where(
+            IntelligenceSource.is_active.is_(True),
+            IntelligenceSource.source_type.in_(sorted(source_types)),
         )
         return self.db.execute(statement).scalars().all()
 
@@ -141,3 +152,37 @@ class IntelligenceRepository:
         articles = self.db.execute(statement).scalars().all()
         article_map = {article.id: article for article in articles}
         return [article_map[article_id] for article_id in ids if article_id in article_map]
+
+    def list_recent_for_farm_context(
+        self,
+        *,
+        farm: Farm,
+        article_types: set[str],
+        limit: int = 30,
+    ) -> Sequence[NewsArticle]:
+        crop = farm.crop.lower()
+        district = farm.district.lower()
+        state = farm.state.lower()
+        statement = (
+            select(NewsArticle)
+            .where(NewsArticle.article_type.in_(sorted(article_types)))
+            .where(
+                or_(
+                    NewsArticle.crop_tags.contains([crop]),
+                    NewsArticle.district_tags.contains([district]),
+                    NewsArticle.state_tags.contains([state]),
+                    NewsArticle.title.ilike(f"%{farm.crop}%"),
+                    NewsArticle.summary.ilike(f"%{farm.crop}%"),
+                    NewsArticle.title.ilike(f"%{farm.district}%"),
+                    NewsArticle.summary.ilike(f"%{farm.district}%"),
+                    NewsArticle.title.ilike(f"%{farm.state}%"),
+                    NewsArticle.summary.ilike(f"%{farm.state}%"),
+                )
+            )
+            .order_by(
+                NewsArticle.published_at.desc().nullslast(),
+                NewsArticle.fetched_at.desc(),
+            )
+            .limit(limit)
+        )
+        return self.db.execute(statement).scalars().all()

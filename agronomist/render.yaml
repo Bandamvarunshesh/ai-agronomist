@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: ai-agronomist-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install --no-cache-dir -r requirements.txt
+    preDeployCommand: alembic upgrade head
+    startCommand: python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers
+    healthCheckPath: /api/v1/health/ready
+    autoDeploy: true
+    disk:
+      name: agronomist-data
+      mountPath: /var/data
+      sizeGB: 10
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: LOG_FORMAT
+        value: json
+      - key: LOG_ACCESS
+        value: true
+      - key: STORAGE_BACKEND
+        value: local
+      - key: UPLOAD_DIR
+        value: /var/data/uploads
+      - key: KNOWLEDGE_STORAGE_DIR
+        value: /var/data/knowledge_uploads
+      - key: STARTUP_VALIDATE_DATABASE
+        value: true
+      - key: STARTUP_VALIDATE_PGVECTOR
+        value: true
+      - key: STARTUP_VALIDATE_STORAGE
+        value: true
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL_MODE
+        value: require
+      - key: SECRET_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false

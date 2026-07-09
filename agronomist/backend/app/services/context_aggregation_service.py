@@ -27,11 +27,11 @@ from app.services.exceptions import (
     WeatherProviderError,
     WeatherResponseParseError,
 )
+from app.services.farm_intelligence_service import FarmIntelligenceService
 from app.services.farm_service import FarmService
 from app.services.knowledge_service import KnowledgeService
 from app.services.stage_advisory_service import StageAdvisoryService
 from app.services.timeline_service import TimelineService
-from app.services.weather_service import WeatherService
 
 
 @dataclass(frozen=True)
@@ -40,6 +40,7 @@ class RecommendationContext:
     latest_diagnosis: Diagnosis | None
     weather: FarmWeatherRead | None
     weather_unavailable_reason: str | None
+    farm_intelligence: dict[str, Any] | None
     stage_advisory: StageAdvisoryRead
     timeline_events: Sequence[TimelineEvent]
     chat_messages: Sequence[ChatMessage]
@@ -53,6 +54,7 @@ class RecommendationContext:
             "farm_profile": self._farm_snapshot(),
             "latest_diagnosis": self._diagnosis_snapshot(self.latest_diagnosis),
             "weather": self._weather_snapshot(),
+            "farm_intelligence": self.farm_intelligence,
             "crop_stage_advisory": self.stage_advisory.model_dump(mode="json"),
             "timeline": [
                 self._timeline_event_snapshot(event) for event in self.timeline_events
@@ -151,8 +153,8 @@ class ContextAggregationService:
         self.db = db
         self.farm_service = FarmService(db)
         self.chat_repository = ChatRepository(db)
+        self.farm_intelligence_service = FarmIntelligenceService(db)
         self.knowledge_service = KnowledgeService(db)
-        self.weather_service = WeatherService(db)
         self.stage_advisory_service = StageAdvisoryService(db)
         self.timeline_service = TimelineService(db)
 
@@ -167,10 +169,18 @@ class ContextAggregationService:
             user_id=user_id,
             farm_id=farm_id,
         )
-        weather, weather_unavailable_reason = self._get_weather(
+        farm_intelligence = self._get_farm_intelligence(
             user_id=user_id,
             farm_id=farm_id,
         )
+        weather, weather_unavailable_reason = self._get_weather_from_intelligence(
+            farm_intelligence=farm_intelligence,
+        )
+        if weather is None:
+            weather, weather_unavailable_reason = self._get_weather(
+                user_id=user_id,
+                farm_id=farm_id,
+            )
         stage_advisory = self._get_stage_advisory(
             user_id=user_id,
             farm_id=farm_id,
@@ -191,6 +201,7 @@ class ContextAggregationService:
             latest_diagnosis=latest_diagnosis,
             weather=weather,
             weather_unavailable_reason=weather_unavailable_reason,
+            farm_intelligence=farm_intelligence,
             stage_advisory=stage_advisory,
             timeline_events=timeline_events,
             chat_messages=chat_messages,
@@ -235,10 +246,9 @@ class ContextAggregationService:
         farm_id: uuid.UUID,
     ) -> tuple[FarmWeatherRead | None, str | None]:
         try:
-            weather = self.weather_service.get_farm_weather(
+            weather = self.farm_intelligence_service.get_farm_weather_response(
                 user_id=user_id,
                 farm_id=farm_id,
-                log_timeline=False,
             )
         except (
             WeatherLocationNotFoundError,
@@ -248,6 +258,60 @@ class ContextAggregationService:
             return None, str(exc)
 
         return weather, None
+
+    def _get_farm_intelligence(
+        self,
+        *,
+        user_id: uuid.UUID,
+        farm_id: uuid.UUID,
+    ) -> dict[str, Any] | None:
+        try:
+            intelligence = self.farm_intelligence_service.get_farm_intelligence(
+                user_id=user_id,
+                farm_id=farm_id,
+            )
+        except Exception:
+            return None
+        return intelligence.model_dump(mode="json")
+
+    def _get_weather_from_intelligence(
+        self,
+        *,
+        farm_intelligence: dict[str, Any] | None,
+    ) -> tuple[FarmWeatherRead | None, str | None]:
+        if not farm_intelligence:
+            return None, None
+        weather = farm_intelligence.get("weather")
+        resolved_location = farm_intelligence.get("resolved_location")
+        forecast = farm_intelligence.get("forecast")
+        if not isinstance(weather, dict) or not isinstance(resolved_location, dict) or not isinstance(forecast, list):
+            unavailable = farm_intelligence.get("unavailable") or {}
+            reason = unavailable.get("weather") if isinstance(unavailable, dict) else None
+            return None, reason
+        try:
+            return (
+                FarmWeatherRead(
+                    farm_id=farm_intelligence["farm_id"],
+                    farm_name=farm_intelligence["farm_name"],
+                    crop=farm_intelligence["crop"],
+                    resolved_location=resolved_location,
+                    current=weather,
+                    forecast=forecast,
+                    advice={
+                        "irrigation": [],
+                        "rainfall": [],
+                        "spraying": [],
+                        "heat": [],
+                        "wind": [],
+                        "humidity": [],
+                    },
+                    source="farm-intelligence",
+                    fetched_at=farm_intelligence["generated_at"],
+                ),
+                None,
+            )
+        except Exception:
+            return None, "Unable to normalize weather from farm intelligence"
 
     def _get_stage_advisory(
         self,

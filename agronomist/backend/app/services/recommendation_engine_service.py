@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 RECOMMENDATION_SYSTEM_INSTRUCTION = """You are an AI recommendation engine for farm decision support.
-Use only the supplied farm context, weather context, crop-stage advisory, diagnosis history, timeline, chat context, and general agronomic safety principles.
+Use only the supplied farm context, weather context, external intelligence, crop-stage advisory, diagnosis history, timeline, chat context, and general agronomic safety principles.
 
 Required behavior:
 - Return only valid JSON. Do not include markdown, comments, citations, or prose outside JSON.
@@ -174,7 +174,12 @@ class RecommendationEngineService:
         prompt = self._build_prompt(context_snapshot)
 
         try:
-            client = genai.Client(api_key=settings.gemini_api_key)
+            client = genai.Client(
+                api_key=settings.gemini_api_key,
+                http_options=types.HttpOptions(
+                    timeout=settings.gemini_request_timeout_seconds * 1000,
+                ),
+            )
             response = client.models.generate_content(
                 model=settings.gemini_model,
                 contents=[

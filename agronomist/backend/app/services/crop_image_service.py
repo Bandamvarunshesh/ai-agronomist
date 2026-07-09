@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from pathlib import Path
 
 from fastapi import UploadFile
 from sqlalchemy.exc import SQLAlchemyError
@@ -20,12 +19,12 @@ from app.services.exceptions import (
     ImageValidationError,
 )
 from app.services.farm_service import FarmService
+from app.services.storage_service import StorageService
 from app.services.timeline_service import TimelineService
 
 
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
-CHUNK_SIZE_BYTES = 1024 * 1024
 
 
 class CropImageService:
@@ -34,7 +33,7 @@ class CropImageService:
         self.repository = CropImageRepository(db)
         self.farm_service = FarmService(db)
         self.timeline_service = TimelineService(db)
-        self.upload_root = self._resolve_upload_root()
+        self.storage_service = StorageService()
 
     def upload_image(
         self,
@@ -49,17 +48,22 @@ class CropImageService:
         extension = self._validate_extension(original_filename)
         content_type = self._validate_content_type(image.content_type)
 
-        farm_upload_dir = self.upload_root / "farms" / str(farm_id)
         stored_filename = f"{uuid.uuid4()}{extension}"
-        absolute_file_path = farm_upload_dir / stored_filename
-        file_path = self._stored_file_path(absolute_file_path)
-
-        file_size = self._write_image(image, absolute_file_path)
+        relative_path = f"farms/{farm_id}/{stored_filename}"
+        storage_key = self.storage_service.build_storage_key(
+            configured_dir=settings.upload_dir,
+            relative_path=relative_path,
+        )
+        file_size = self._write_image(
+            image=image,
+            relative_path=relative_path,
+            storage_key=storage_key,
+        )
 
         crop_image = CropImage(
             farm_id=farm_id,
             user_id=user_id,
-            file_path=file_path,
+            file_path=storage_key,
             original_filename=original_filename,
             content_type=content_type,
             file_size=file_size,
@@ -80,14 +84,14 @@ class CropImageService:
                     "original_filename": original_filename,
                     "content_type": content_type,
                     "file_size": file_size,
-                    "file_path": file_path,
+                    "file_path": storage_key,
                 },
             )
             self.db.commit()
             self.db.refresh(crop_image)
         except SQLAlchemyError as exc:
             self.db.rollback()
-            self._remove_file(absolute_file_path)
+            self._remove_file(storage_key)
             raise ImagePersistenceError from exc
 
         return crop_image
@@ -116,7 +120,7 @@ class CropImageService:
             raise ImagePersistenceError from exc
 
     def _clean_original_filename(self, filename: str | None) -> str:
-        original_filename = Path(filename or "").name.strip()
+        original_filename = (filename or "").split("/")[-1].split("\\")[-1].strip()
         if not original_filename:
             raise ImageValidationError(
                 "Uploaded image must include an original filename",
@@ -128,7 +132,8 @@ class CropImageService:
         return original_filename
 
     def _validate_extension(self, filename: str) -> str:
-        extension = Path(filename).suffix.lower()
+        filename_parts = filename.rsplit(".", 1)
+        extension = f".{filename_parts[1].lower()}" if len(filename_parts) == 2 else ""
         if extension not in ALLOWED_IMAGE_EXTENSIONS:
             raise ImageValidationError(
                 "Only jpg, jpeg, png, and webp images are allowed",
@@ -142,56 +147,39 @@ class CropImageService:
             )
         return content_type
 
-    def _write_image(self, image: UploadFile, destination: Path) -> int:
-        destination.parent.mkdir(parents=True, exist_ok=True)
+    def _write_image(
+        self,
+        *,
+        image: UploadFile,
+        relative_path: str,
+        storage_key: str,
+    ) -> int:
         max_size_bytes = settings.max_image_upload_size_mb * 1024 * 1024
-        file_size = 0
 
         try:
-            image.file.seek(0)
-            with destination.open("wb") as output_file:
-                while True:
-                    chunk = image.file.read(CHUNK_SIZE_BYTES)
-                    if not chunk:
-                        break
-
-                    file_size += len(chunk)
-                    if file_size > max_size_bytes:
-                        raise ImageTooLargeError(
-                            f"Image must be {settings.max_image_upload_size_mb} MB or smaller",
-                        )
-
-                    output_file.write(chunk)
-        except ImageValidationError:
-            self._remove_file(destination)
+            stored_file = self.storage_service.write_upload_file(
+                configured_dir=settings.upload_dir,
+                relative_path=relative_path,
+                upload_file=image,
+                max_size_bytes=max_size_bytes,
+            )
+        except ValueError as exc:
+            if str(exc) == "file_too_large":
+                raise ImageTooLargeError(
+                    f"Image must be {settings.max_image_upload_size_mb} MB or smaller",
+                ) from exc
             raise
         except OSError as exc:
-            self._remove_file(destination)
             raise ImageStorageError from exc
 
-        if file_size == 0:
-            self._remove_file(destination)
+        if stored_file.size == 0:
+            self._remove_file(storage_key)
             raise ImageValidationError("Uploaded image cannot be empty")
 
-        return file_size
+        return stored_file.size
 
-    def _remove_file(self, file_path: Path) -> None:
+    def _remove_file(self, storage_key: str) -> None:
         try:
-            file_path.unlink(missing_ok=True)
+            self.storage_service.delete(storage_key)
         except OSError:
             pass
-
-    def _resolve_upload_root(self) -> Path:
-        configured_upload_dir = Path(settings.upload_dir)
-        if configured_upload_dir.is_absolute():
-            return configured_upload_dir
-        return self._backend_root() / configured_upload_dir
-
-    def _backend_root(self) -> Path:
-        return Path(__file__).resolve().parents[2]
-
-    def _stored_file_path(self, absolute_file_path: Path) -> str:
-        try:
-            return str(absolute_file_path.relative_to(self._backend_root()))
-        except ValueError:
-            return str(absolute_file_path)

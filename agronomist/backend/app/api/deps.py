@@ -15,6 +15,7 @@ from app.services.crop_image_service import CropImageService
 from app.services.diagnosis_service import DiagnosisService
 from app.services.escalation_service import EscalationService
 from app.services.farm_service import FarmService
+from app.services.farm_intelligence_service import FarmIntelligenceService
 from app.services.intelligence_service import IntelligenceService
 from app.services.knowledge_service import KnowledgeService
 from app.services.notification_service import NotificationService
@@ -131,6 +132,12 @@ def get_ai_farming_chat_service(
 
 def get_weather_service(db: Session = Depends(get_db)) -> WeatherService:
     return WeatherService(db)
+
+
+def get_farm_intelligence_service(
+    db: Session = Depends(get_db),
+) -> FarmIntelligenceService:
+    return FarmIntelligenceService(db)
 
 
 def get_stage_advisory_service(

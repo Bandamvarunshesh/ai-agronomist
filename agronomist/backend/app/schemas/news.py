@@ -58,7 +58,17 @@ class IntelligenceSourceConfigEntry(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     name: str = Field(min_length=1, max_length=255)
-    source_type: Literal["news", "government_advisory", "research", "market_update"]
+    source_type: Literal[
+        "news",
+        "government_advisory",
+        "research",
+        "market_update",
+        "market_price",
+        "soil_data",
+        "pest_alert",
+        "disease_alert",
+        "outbreak_alert",
+    ]
     source_format: Literal["rss", "atom", "xml", "json", "html"] = "rss"
     url: str = Field(min_length=1, max_length=2048)
     language: str = Field(default="en", min_length=1, max_length=16)

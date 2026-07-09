@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +31,7 @@ from app.services.exceptions import (
     KnowledgePersistenceError,
     KnowledgeValidationError,
 )
+from app.services.storage_service import StorageService
 
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,7 @@ class KnowledgeService:
         self.repository = KnowledgeRepository(db)
         self.parser = DocumentParserService()
         self.embedding_service = EmbeddingService()
+        self.storage_service = StorageService()
 
     def list_documents(
         self,
@@ -129,7 +130,7 @@ class KnowledgeService:
                 version_number=document.current_version,
                 checksum=checksum,
                 original_filename=path.name,
-                storage_path=str(storage_path),
+                storage_path=storage_path,
                 parser=parsed.parser,
                 extracted_text=parsed.text,
                 word_count=parsed.word_count,
@@ -403,15 +404,13 @@ class KnowledgeService:
             citation=citation,
         )
 
-    def _store_document_file(self, path: Path, checksum: str) -> Path:
-        storage_dir = Path(settings.knowledge_storage_dir)
-        if not storage_dir.is_absolute():
-            storage_dir = Path(__file__).resolve().parents[2] / storage_dir
-        storage_dir.mkdir(parents=True, exist_ok=True)
-        destination = storage_dir / f"{checksum}{path.suffix.lower()}"
-        if not destination.exists():
-            shutil.copy2(path, destination)
-        return destination
+    def _store_document_file(self, path: Path, checksum: str) -> str:
+        stored_file = self.storage_service.copy_file(
+            source_path=path,
+            configured_dir=settings.knowledge_storage_dir,
+            relative_path=f"documents/{checksum}{path.suffix.lower()}",
+        )
+        return stored_file.storage_key
 
     def _get_existing_document(self, source_uri: str) -> KnowledgeDocument | None:
         try:

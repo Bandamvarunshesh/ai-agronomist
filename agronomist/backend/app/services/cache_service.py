@@ -34,5 +34,11 @@ class TTLCache(Generic[T]):
             expires_at=time.monotonic() + self.ttl_seconds,
         )
 
+    def get_stale(self, key: str) -> T | None:
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        return entry.value
+
     def clear(self) -> None:
         self._entries.clear()

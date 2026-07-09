@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
-from pathlib import Path
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -23,8 +22,12 @@ from app.services.exceptions import (
     NotificationPersistenceError,
 )
 from app.services.escalation_service import EscalationService
+from app.services.farm_intelligence_service import FarmIntelligenceService
 from app.services.farm_service import FarmService
+from app.services.knowledge_service import KnowledgeService
 from app.services.notification_generation_service import NotificationGenerationService
+from app.services.stage_advisory_service import StageAdvisoryService
+from app.services.storage_service import StorageService
 from app.services.timeline_service import TimelineService
 from app.services.vision_service import VisionService
 
@@ -39,8 +42,12 @@ class DiagnosisService:
         self.crop_image_repository = CropImageRepository(db)
         self.diagnosis_repository = DiagnosisRepository(db)
         self.escalation_service = EscalationService(db)
+        self.farm_intelligence_service = FarmIntelligenceService(db)
+        self.knowledge_service = KnowledgeService(db)
         self.notification_generation_service = NotificationGenerationService(db)
+        self.stage_advisory_service = StageAdvisoryService(db)
         self.timeline_service = TimelineService(db)
+        self.storage_service = StorageService()
         self.vision_service = VisionService()
 
     def diagnose_farm_image(
@@ -53,11 +60,16 @@ class DiagnosisService:
         farm = self._ensure_farm_owner(user_id, farm_id)
         crop_image = self._resolve_crop_image(farm_id, diagnosis_in.image_id)
         image_bytes = self._read_image_file(crop_image)
+        context_text = self._build_diagnosis_context(
+            user_id=user_id,
+            farm=farm,
+        )
 
         vision_result = self.vision_service.diagnose_image(
             image_bytes=image_bytes,
             content_type=crop_image.content_type,
             image_file_path=crop_image.file_path,
+            context_text=context_text,
         )
         payload = vision_result.payload
 
@@ -152,20 +164,85 @@ class DiagnosisService:
         return crop_image
 
     def _read_image_file(self, crop_image: CropImage) -> bytes:
-        image_path = self._resolve_image_path(crop_image.file_path)
-        if not image_path.is_file():
-            raise ImageFileNotFoundError
-
         try:
-            return image_path.read_bytes()
+            return self.storage_service.read_bytes(crop_image.file_path)
         except OSError as exc:
             raise ImageFileNotFoundError from exc
 
-    def _resolve_image_path(self, file_path: str) -> Path:
-        path = Path(file_path)
-        if path.is_absolute():
-            return path
-        return self._backend_root() / path
+    def _build_diagnosis_context(
+        self,
+        *,
+        user_id: uuid.UUID,
+        farm: Farm,
+    ) -> str | None:
+        lines: list[str] = []
+        try:
+            intelligence_snapshot, intelligence_text = self.farm_intelligence_service.build_ai_context(
+                user_id=user_id,
+                farm_id=farm.id,
+            )
+            del intelligence_snapshot
+            if intelligence_text:
+                lines.append(intelligence_text)
+        except Exception:
+            lines.append("External agricultural intelligence: unavailable.")
 
-    def _backend_root(self) -> Path:
-        return Path(__file__).resolve().parents[2]
+        try:
+            stage_advisory = self.stage_advisory_service.get_stage_advisory(
+                user_id=user_id,
+                farm_id=farm.id,
+                log_timeline=False,
+            )
+            lines.append(
+                "Crop stage advisory:\n"
+                f"- Current stage: {stage_advisory.current_stage.name}\n"
+                f"- Risks: {', '.join(stage_advisory.risks[:5]) if stage_advisory.risks else 'none'}\n"
+                f"- Important actions: {', '.join(stage_advisory.important_actions[:5]) if stage_advisory.important_actions else 'none'}"
+            )
+        except Exception:
+            lines.append("Crop stage advisory: unavailable.")
+
+        try:
+            previous_diagnoses = self.diagnosis_repository.list_by_farm(
+                farm.id,
+                skip=0,
+                limit=5,
+            )
+            if previous_diagnoses:
+                lines.append(
+                    "Previous diagnoses:\n"
+                    + "\n".join(
+                        f"- {item.created_at.date().isoformat()}: {item.disease_name}; severity {item.severity}; confidence {item.confidence_score}"
+                        for item in previous_diagnoses
+                    )
+                )
+        except Exception:
+            pass
+
+        try:
+            timeline_events = self.timeline_service.list_events(
+                user_id=user_id,
+                farm_id=farm.id,
+                limit=8,
+            )
+            if timeline_events:
+                lines.append(
+                    "Recent farm timeline:\n"
+                    + "\n".join(
+                        f"- {event.event_date.date().isoformat()}: {event.title}"
+                        for event in timeline_events[:5]
+                    )
+                )
+        except Exception:
+            pass
+
+        try:
+            query = " ".join(part for part in [farm.crop, farm.district, farm.state, farm.soil_type or ""] if part)
+            rag_context, _citations = self.knowledge_service.build_rag_context(query=query, limit=4)
+            if rag_context:
+                lines.append(rag_context)
+        except Exception:
+            pass
+
+        context_text = "\n\n".join(line for line in lines if line.strip())
+        return context_text or None

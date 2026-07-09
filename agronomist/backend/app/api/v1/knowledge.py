@@ -25,6 +25,7 @@ from app.services.exceptions import (
     KnowledgeValidationError,
 )
 from app.services.knowledge_service import KnowledgeService
+from app.services.storage_service import StorageService
 
 
 router = APIRouter(tags=["knowledge"])
@@ -86,7 +87,7 @@ async def ingest_knowledge_document(
         if file is None:
             raise KnowledgeValidationError("Provide either file or folder_path")
 
-        upload_path = await _store_upload(file, temporary=dry_run)
+        upload_path, staged_storage_key = await _store_upload(file, temporary=dry_run)
         if dry_run:
             try:
                 dry_run_document = knowledge_service.dry_run_path(
@@ -107,15 +108,25 @@ async def ingest_knowledge_document(
                 dry_run_documents=[dry_run_document],
             )
 
-        document = knowledge_service.ingest_path(
-            path=upload_path,
-            title=title,
-            source_uri=source_uri or file.filename,
-            language=language,
-            metadata=metadata,
-            user_id=current_user.id,
-            force_reindex=force_reindex,
-        )
+        try:
+            document = knowledge_service.ingest_path(
+                path=upload_path,
+                title=title,
+                source_uri=source_uri or file.filename,
+                language=language,
+                metadata=metadata,
+                user_id=current_user.id,
+                force_reindex=force_reindex,
+            )
+        finally:
+            if staged_storage_key is not None:
+                try:
+                    StorageService().delete(staged_storage_key)
+                except OSError:
+                    logger.warning(
+                        "Unable to remove staged knowledge upload: %s",
+                        staged_storage_key,
+                    )
         return KnowledgeBulkIngestResponse(
             documents=[document],
             ingested_count=1,
@@ -196,20 +207,24 @@ def search_knowledge(
         )
 
 
-async def _store_upload(file: UploadFile, *, temporary: bool = False) -> Path:
+async def _store_upload(
+    file: UploadFile,
+    *,
+    temporary: bool = False,
+) -> tuple[Path, str | None]:
     suffix = Path(file.filename or "").suffix.lower()
     if temporary:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temporary_file:
             temporary_file.write(await file.read())
-            return Path(temporary_file.name)
+            return Path(temporary_file.name), None
 
-    upload_dir = Path(settings.knowledge_storage_dir)
-    if not upload_dir.is_absolute():
-        upload_dir = Path(__file__).resolve().parents[3] / upload_dir / "incoming"
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    destination = upload_dir / f"{uuid.uuid4()}{suffix}"
-    destination.write_bytes(await file.read())
-    return destination
+    relative_path = f"incoming/{uuid.uuid4()}{suffix}"
+    stored_file = StorageService().write_bytes(
+        configured_dir=settings.knowledge_storage_dir,
+        relative_path=relative_path,
+        payload=await file.read(),
+    )
+    return stored_file.absolute_path, stored_file.storage_key
 
 
 def _parse_metadata(metadata_json: str) -> dict:

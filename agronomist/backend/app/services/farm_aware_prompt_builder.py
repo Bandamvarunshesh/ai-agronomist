@@ -34,6 +34,7 @@ class FarmAwarePromptBuilder:
         user: User,
         farm: Farm | None,
         recent_diagnoses: Sequence[Diagnosis],
+        intelligence_context: str | None = None,
         rag_context: str | None = None,
     ) -> str:
         sections = [
@@ -51,6 +52,11 @@ class FarmAwarePromptBuilder:
             sections.append(self._format_diagnosis_context(recent_diagnoses))
         else:
             sections.append("Recent diagnosis context: none available.")
+
+        if intelligence_context and intelligence_context.strip():
+            sections.append(intelligence_context.strip())
+        else:
+            sections.append("External agricultural intelligence: none available.")
 
         if rag_context and rag_context.strip():
             sections.append(f"RAG/document context:\n{rag_context.strip()}")

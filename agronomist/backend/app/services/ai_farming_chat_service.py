@@ -27,6 +27,7 @@ from app.services.exceptions import (
     FarmPersistenceError,
 )
 from app.services.farm_aware_prompt_builder import FarmAwarePromptBuilder
+from app.services.farm_intelligence_service import FarmIntelligenceService
 from app.services.farm_service import FarmService
 from app.services.knowledge_service import KnowledgeService
 from app.services.timeline_service import TimelineService
@@ -46,6 +47,7 @@ class AIFarmingChatService:
         self.db = db
         self.repository = ChatRepository(db)
         self.farm_service = FarmService(db)
+        self.intelligence_service = FarmIntelligenceService(db)
         self.knowledge_service = KnowledgeService(db)
         self.prompt_builder = FarmAwarePromptBuilder()
         self.timeline_service = TimelineService(db)
@@ -122,14 +124,20 @@ class AIFarmingChatService:
             user_id=user.id,
             farm_id=chat_session.farm_id,
         )
+        intelligence_snapshot, intelligence_context = self._get_intelligence_context(
+            user_id=user.id,
+            farm_id=chat_session.farm_id,
+        )
         rag_context, citations = self._get_rag_context(
             farm=chat_session.farm,
             user_content=message_in.content,
+            intelligence_context=intelligence_context,
         )
         system_instruction = self.prompt_builder.build_system_instruction(
             user=user,
             farm=chat_session.farm,
             recent_diagnoses=recent_diagnoses,
+            intelligence_context=intelligence_context,
             rag_context=rag_context,
         )
 
@@ -162,6 +170,7 @@ class AIFarmingChatService:
                 "recent_diagnosis_ids": [
                     str(diagnosis.id) for diagnosis in recent_diagnoses
                 ],
+                "intelligence_context": intelligence_snapshot,
             },
         )
 
@@ -231,12 +240,36 @@ class AIFarmingChatService:
         *,
         farm,
         user_content: str,
+        intelligence_context: str | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         query_parts = [user_content]
         if farm is not None:
             query_parts.extend([farm.crop, farm.district, farm.state])
+        if intelligence_context:
+            query_parts.append(intelligence_context)
         query = " ".join(part for part in query_parts if part)
         return self.knowledge_service.build_rag_context(query=query, limit=5)
+
+    def _get_intelligence_context(
+        self,
+        *,
+        user_id: uuid.UUID,
+        farm_id: uuid.UUID | None,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        if farm_id is None:
+            return None, None
+        try:
+            return self.intelligence_service.build_ai_context(
+                user_id=user_id,
+                farm_id=farm_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Farm intelligence unavailable for chat: farm_id=%s error=%s",
+                farm_id,
+                str(exc),
+            )
+            return None, None
 
     def _generate_assistant_response(
         self,
@@ -249,7 +282,12 @@ class AIFarmingChatService:
         contents = self._build_gemini_contents(history, user_content)
 
         try:
-            client = genai.Client(api_key=settings.gemini_api_key)
+            client = genai.Client(
+                api_key=settings.gemini_api_key,
+                http_options=types.HttpOptions(
+                    timeout=settings.gemini_request_timeout_seconds * 1000,
+                ),
+            )
             response = client.models.generate_content(
                 model=settings.gemini_model,
                 contents=contents,

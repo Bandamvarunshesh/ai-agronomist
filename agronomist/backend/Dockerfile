@@ -36,6 +36,7 @@ COPY requirements.txt .
 RUN pip install --no-index --find-links=/wheels -r requirements.txt \
     && rm -rf /wheels
 
+COPY entrypoint.sh /app/entrypoint.sh
 COPY alembic ./alembic
 COPY alembic.ini .
 COPY app ./app
@@ -43,6 +44,7 @@ COPY config ./config
 
 RUN addgroup --system app && adduser --system --ingroup app app \
     && mkdir -p /app/uploads /app/knowledge_uploads \
+    && chmod +x /app/entrypoint.sh \
     && chown -R app:app /app
 
 USER app
@@ -51,4 +53,4 @@ EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD python -c "import os,sys,urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.getenv(\"PORT\", \"8000\")}/api/v1/health/live', timeout=3); sys.exit(0)"
 
-CMD ["sh", "-c", "python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers"]
+CMD ["/app/entrypoint.sh"]

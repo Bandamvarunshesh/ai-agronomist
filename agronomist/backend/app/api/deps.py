@@ -16,6 +16,7 @@ from app.services.diagnosis_service import DiagnosisService
 from app.services.escalation_service import EscalationService
 from app.services.farm_service import FarmService
 from app.services.farm_intelligence_service import FarmIntelligenceService
+from app.services.geocoding_service import ReverseGeocodingService
 from app.services.intelligence_service import IntelligenceService
 from app.services.knowledge_service import KnowledgeService
 from app.services.notification_service import NotificationService
@@ -158,3 +159,7 @@ def get_recommendation_engine_service(
 
 def get_notification_service(db: Session = Depends(get_db)) -> NotificationService:
     return NotificationService(db)
+
+
+def get_reverse_geocoding_service() -> ReverseGeocodingService:
+    return ReverseGeocodingService()

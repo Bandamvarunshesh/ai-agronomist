@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     intelligence_request_retries: int = 3
     news_cache_ttl_seconds: int = 300
     farm_weather_cache_ttl_seconds: int = 900
+    weather_cache_ttl_seconds: int = 900
+    weather_stale_ttl_seconds: int = 3600
+    weather_max_retries: int = 1
+    weather_provider_cooldown_seconds: int = 300
     farm_market_cache_ttl_seconds: int = 900
     farm_advisory_cache_ttl_seconds: int = 1800
     farm_soil_cache_ttl_seconds: int = 43200
@@ -88,6 +92,11 @@ class Settings(BaseSettings):
     openweather_api_key: str = ""
     weatherapi_base_url: str = "https://api.weatherapi.com/v1"
     weatherapi_api_key: str = ""
+    geocoding_provider: str = "nominatim"
+    nominatim_reverse_url: str = "https://nominatim.openstreetmap.org/reverse"
+    nominatim_user_agent: str = "ai-agronomist/0.1 (configure NOMINATIM_USER_AGENT)"
+    geocoding_cache_ttl_seconds: int = 86400
+    geocoding_min_interval_ms: int = 1100
 
     # Server
     host: str = "0.0.0.0"

@@ -1,7 +1,7 @@
 import { apiRequest } from "./client";
-import type { Farm } from "./farms";
+import { listFarms as listFarmsRequest, type Farm } from "./farms";
 
-export { listFarms, type Farm } from "./farms";
+export type { Farm } from "./farms";
 
 export type RecommendationItem = {
   priority: number;
@@ -85,6 +85,9 @@ export type FarmWeather = {
   };
   source: string;
   fetched_at: string;
+  is_stale?: boolean;
+  unavailable?: string | null;
+  cache_status?: string;
 };
 
 export type Notification = {
@@ -128,28 +131,97 @@ export type TimelineEvent = {
   updated_at: string;
 };
 
+const FARMS_CACHE_TTL_MS = 60 * 1000;
+const NOTIFICATIONS_CACHE_TTL_MS = 30 * 1000;
+const RECOMMENDATIONS_CACHE_TTL_MS = 60 * 1000;
 const WEATHER_CACHE_TTL_MS = 15 * 60 * 1000;
+const TIMELINE_CACHE_TTL_MS = 60 * 1000;
 const WEATHER_REQUEST_TIMEOUT_MS = 8000;
 
-const farmWeatherCache = new Map<
-  string,
-  {
-    expiresAt: number;
-    value: FarmWeather;
+type CacheEntry<T> = {
+  expiresAt: number;
+  value: T;
+};
+
+const responseCache = new Map<string, CacheEntry<unknown>>();
+const inflightRequests = new Map<string, Promise<unknown>>();
+
+function readCache<T>(key: string): T | null {
+  const cached = responseCache.get(key);
+  if (!cached) {
+    return null;
   }
->();
+
+  if (cached.expiresAt <= Date.now()) {
+    responseCache.delete(key);
+    return null;
+  }
+
+  return cached.value as T;
+}
+
+function writeCache<T>(key: string, value: T, ttlMs: number): T {
+  responseCache.set(key, {
+    expiresAt: Date.now() + ttlMs,
+    value,
+  });
+  return value;
+}
+
+async function cachedRequest<T>(
+  key: string,
+  ttlMs: number,
+  load: () => Promise<T>,
+): Promise<T> {
+  const cached = readCache<T>(key);
+  if (cached !== null) {
+    return cached;
+  }
+
+  const inflight = inflightRequests.get(key);
+  if (inflight) {
+    return inflight as Promise<T>;
+  }
+
+  const request = load()
+    .then((value) => writeCache(key, value, ttlMs))
+    .finally(() => {
+      inflightRequests.delete(key);
+    });
+
+  inflightRequests.set(key, request);
+  return request;
+}
+
+export async function listFarms(
+  authToken: string,
+  options: { skip?: number; limit?: number } = {},
+) {
+  const skip = options.skip ?? 0;
+  const limit = options.limit ?? 100;
+  return cachedRequest(
+    `farms:${authToken}:${skip}:${limit}`,
+    FARMS_CACHE_TTL_MS,
+    () => listFarmsRequest(authToken, { skip, limit }),
+  );
+}
 
 export async function listFarmRecommendations(
   authToken: string,
   farmId: string,
   limit = 1,
 ) {
-  return apiRequest<FarmRecommendation[]>(
-    `/farms/${farmId}/recommendations?limit=${limit}&skip=0`,
-    {
-      method: "GET",
-      authToken,
-    },
+  return cachedRequest(
+    `recommendations:${authToken}:${farmId}:${limit}`,
+    RECOMMENDATIONS_CACHE_TTL_MS,
+    () =>
+      apiRequest<FarmRecommendation[]>(
+        `/farms/${farmId}/recommendations?limit=${limit}&skip=0`,
+        {
+          method: "GET",
+          authToken,
+        },
+      ),
   );
 }
 
@@ -162,43 +234,38 @@ export async function getFarmWeather(authToken: string, farmId: string) {
 }
 
 export async function getCachedFarmWeather(authToken: string, farmId: string) {
-  const cached = farmWeatherCache.get(farmId);
-  const now = Date.now();
+  return cachedRequest(
+    `weather:${authToken}:${farmId}`,
+    WEATHER_CACHE_TTL_MS,
+    async () => {
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          return await getFarmWeather(authToken, farmId);
+        } catch (error) {
+          lastError = error;
+        }
+      }
 
-  if (cached && cached.expiresAt > now) {
-    return cached.value;
-  }
-
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const weather = await getFarmWeather(authToken, farmId);
-      farmWeatherCache.set(farmId, {
-        expiresAt: Date.now() + WEATHER_CACHE_TTL_MS,
-        value: weather,
-      });
-      return weather;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  if (cached) {
-    return cached.value;
-  }
-
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("Unable to load weather right now.");
+      throw lastError instanceof Error
+        ? lastError
+        : new Error("Unable to load weather right now.");
+    },
+  );
 }
 
 export async function listNotifications(authToken: string, limit = 6) {
-  return apiRequest<Notification[]>(
-    `/notifications?limit=${limit}&skip=0&unread_only=false`,
-    {
-      method: "GET",
-      authToken,
-    },
+  return cachedRequest(
+    `notifications:${authToken}:${limit}`,
+    NOTIFICATIONS_CACHE_TTL_MS,
+    () =>
+      apiRequest<Notification[]>(
+        `/notifications?limit=${limit}&skip=0&unread_only=false`,
+        {
+          method: "GET",
+          authToken,
+        },
+      ),
   );
 }
 
@@ -207,11 +274,16 @@ export async function listFarmTimeline(
   farmId: string,
   limit = 4,
 ) {
-  return apiRequest<TimelineEvent[]>(
-    `/farms/${farmId}/timeline?limit=${limit}&skip=0`,
-    {
-      method: "GET",
-      authToken,
-    },
+  return cachedRequest(
+    `timeline:${authToken}:${farmId}:${limit}`,
+    TIMELINE_CACHE_TTL_MS,
+    () =>
+      apiRequest<TimelineEvent[]>(
+        `/farms/${farmId}/timeline?limit=${limit}&skip=0`,
+        {
+          method: "GET",
+          authToken,
+        },
+      ),
   );
 }

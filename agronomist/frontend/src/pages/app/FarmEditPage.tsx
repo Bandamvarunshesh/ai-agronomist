@@ -136,6 +136,7 @@ export function FarmEditPage() {
           </div>
         ) : status === "ready" && values ? (
           <FarmForm
+            authToken={state.token}
             cancelTo={`/app/farms/${farmId}`}
             onChange={(field, value) =>
               setValues((current) =>

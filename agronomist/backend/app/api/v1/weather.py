@@ -42,15 +42,15 @@ def get_farm_weather(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         )
-    except WeatherResponseParseError as exc:
+    except WeatherResponseParseError:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
+            detail="Weather temporarily unavailable",
         )
-    except WeatherProviderError as exc:
+    except WeatherProviderError:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
+            detail="Weather temporarily unavailable",
         )
     except TimelinePersistenceError:
         raise HTTPException(

@@ -22,15 +22,17 @@ type DashboardData = {
   recommendations: Array<FarmRecommendation & { farm: Farm }>;
   weatherSummaries: Array<FarmWeather & { farm: Farm }>;
   timeline: Array<TimelineEvent & { farm: Farm | null }>;
-  partialErrors: string[];
 };
 
 type SectionLoadingState = {
+  farms: boolean;
   notifications: boolean;
   recommendations: boolean;
   weather: boolean;
   timeline: boolean;
 };
+
+type SectionErrorState = Record<keyof SectionLoadingState, string | null>;
 
 const relativeDateFormatter = new Intl.RelativeTimeFormat(undefined, {
   numeric: "auto",
@@ -43,16 +45,26 @@ function createEmptyDashboard(farms: Farm[]): DashboardData {
     recommendations: [],
     weatherSummaries: [],
     timeline: [],
-    partialErrors: [],
   };
 }
 
 function createSectionLoadingState(value: boolean): SectionLoadingState {
   return {
+    farms: value,
     notifications: value,
     recommendations: value,
     weather: value,
     timeline: value,
+  };
+}
+
+function createSectionErrorState(): SectionErrorState {
+  return {
+    farms: null,
+    notifications: null,
+    recommendations: null,
+    weather: null,
+    timeline: null,
   };
 }
 
@@ -92,9 +104,12 @@ function formatAcreage(value: string) {
 
 function summarizePartialError(section: string, error: unknown) {
   if (error instanceof Error) {
-    return `${section}: ${error.message}`;
+    if (section === "Weather") {
+      return "Weather temporarily unavailable.";
+    }
+    return error.message;
   }
-  return `${section}: unable to load data`;
+  return `${section} is temporarily unavailable.`;
 }
 
 export function WorkspacePage() {
@@ -104,6 +119,9 @@ export function WorkspacePage() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [sectionLoading, setSectionLoading] = useState<SectionLoadingState>(() =>
     createSectionLoadingState(false),
+  );
+  const [sectionErrors, setSectionErrors] = useState<SectionErrorState>(() =>
+    createSectionErrorState(),
   );
   const [refreshTick, setRefreshTick] = useState(0);
 
@@ -115,204 +133,209 @@ export function WorkspacePage() {
     let cancelled = false;
 
     const loadDashboard = async () => {
-      setStatus("loading");
+      setStatus("ready");
       setError(null);
-      setSectionLoading(createSectionLoadingState(false));
+      setDashboard((current) => current || createEmptyDashboard([]));
+      setSectionErrors(createSectionErrorState());
+      setSectionLoading({
+        farms: true,
+        notifications: true,
+        recommendations: false,
+        weather: false,
+        timeline: false,
+      });
 
-      try {
-        const farms = await listFarms(state.token!);
-        const limitedFarms = farms.slice(0, 6);
-
+      const updateDashboard = (updater: (current: DashboardData) => DashboardData) => {
         if (cancelled) {
           return;
         }
+        setDashboard((current) => updater(current || createEmptyDashboard([])));
+      };
 
-        setDashboard(createEmptyDashboard(farms));
-        setStatus("ready");
-        setSectionLoading({
-          notifications: true,
-          recommendations: limitedFarms.length > 0,
-          weather: limitedFarms.length > 0,
-          timeline: limitedFarms.length > 0,
-        });
+      const setSectionError = (
+        section: keyof SectionErrorState,
+        message: string | null,
+      ) => {
+        if (cancelled) {
+          return;
+        }
+        setSectionErrors((current) => ({ ...current, [section]: message }));
+      };
 
-        const updateDashboard = (updater: (current: DashboardData) => DashboardData) => {
-          if (cancelled) {
-            return;
+      const finishSection = (section: keyof SectionLoadingState) => {
+        if (cancelled) {
+          return;
+        }
+        setSectionLoading((current) => ({ ...current, [section]: false }));
+      };
+
+      const loadNotificationsSection = async () => {
+        try {
+          const [notificationResult] = await Promise.allSettled([
+            listNotifications(state.token!, 6),
+          ]);
+
+          if (notificationResult.status === "fulfilled") {
+            updateDashboard((current) => ({
+              ...current,
+              notifications: notificationResult.value,
+            }));
+            setSectionError("notifications", null);
+          } else {
+            setSectionError(
+              "notifications",
+              summarizePartialError("Notifications", notificationResult.reason),
+            );
           }
-          setDashboard((current) => (current ? updater(current) : current));
-        };
+        } finally {
+          finishSection("notifications");
+        }
+      };
 
-        const finishSection = (section: keyof SectionLoadingState) => {
-          if (cancelled) {
-            return;
-          }
-          setSectionLoading((current) => ({ ...current, [section]: false }));
-        };
+      const loadRecommendationsSection = async (limitedFarms: Farm[]) => {
+        setSectionLoading((current) => ({ ...current, recommendations: true }));
+        try {
+          const recommendationResults = await Promise.allSettled(
+            limitedFarms.map(async (farm) => {
+              const recommendations = await listFarmRecommendations(
+                state.token!,
+                farm.id,
+                1,
+              );
+              return recommendations[0]
+                ? ({ ...recommendations[0], farm } as FarmRecommendation & {
+                    farm: Farm;
+                  })
+                : null;
+            }),
+          );
 
-        const appendPartialErrors = (partialErrors: string[]) => {
-          if (!partialErrors.length) {
-            return;
-          }
+          const errors: string[] = [];
+          const recommendations = recommendationResults
+            .flatMap((result) => {
+              if (result.status === "fulfilled") {
+                return result.value ? [result.value] : [];
+              }
+              errors.push(summarizePartialError("Recommendations", result.reason));
+              return [];
+            })
+            .sort(
+              (left, right) =>
+                new Date(right.generated_at).getTime() -
+                new Date(left.generated_at).getTime(),
+            );
+
           updateDashboard((current) => ({
             ...current,
-            partialErrors: [...current.partialErrors, ...partialErrors],
+            recommendations,
           }));
-        };
+          setSectionError("recommendations", errors[0] || null);
+        } finally {
+          finishSection("recommendations");
+        }
+      };
 
-        const loadNotificationsSection = async () => {
-          try {
-            const [notificationResult] = await Promise.allSettled([
-              listNotifications(state.token!, 6),
-            ]);
+      const loadWeatherSection = async (limitedFarms: Farm[]) => {
+        setSectionLoading((current) => ({ ...current, weather: true }));
+        try {
+          const weatherResults = await Promise.allSettled(
+            limitedFarms.slice(0, 4).map(async (farm) => ({
+              ...(await getCachedFarmWeather(state.token!, farm.id)),
+              farm,
+            })),
+          );
 
-            if (notificationResult.status === "fulfilled") {
-              updateDashboard((current) => ({
-                ...current,
-                notifications: notificationResult.value,
-              }));
-            } else {
-              appendPartialErrors([
-                summarizePartialError("Notifications", notificationResult.reason),
-              ]);
+          const errors: string[] = [];
+          const weatherSummaries = weatherResults.flatMap((result) => {
+            if (result.status === "fulfilled") {
+              return [result.value];
             }
-          } finally {
-            finishSection("notifications");
-          }
-        };
+            errors.push(summarizePartialError("Weather", result.reason));
+            return [];
+          });
 
-        const loadRecommendationsSection = async () => {
-          try {
-            const recommendationResults = await Promise.allSettled(
-              limitedFarms.map(async (farm) => {
-                const recommendations = await listFarmRecommendations(
-                  state.token!,
-                  farm.id,
-                  1,
-                );
-                return recommendations[0]
-                  ? ({ ...recommendations[0], farm } as FarmRecommendation & {
-                      farm: Farm;
-                    })
-                  : null;
-              }),
-            );
+          updateDashboard((current) => ({
+            ...current,
+            weatherSummaries,
+          }));
+          setSectionError("weather", errors[0] || null);
+        } finally {
+          finishSection("weather");
+        }
+      };
 
-            const partialErrors: string[] = [];
-            const recommendations = recommendationResults
-              .flatMap((result) => {
-                if (result.status === "fulfilled") {
-                  return result.value ? [result.value] : [];
-                }
-                partialErrors.push(
-                  summarizePartialError("Recommendations", result.reason),
-                );
-                return [];
-              })
-              .sort(
-                (left, right) =>
-                  new Date(right.generated_at).getTime() -
-                  new Date(left.generated_at).getTime(),
-              );
+      const loadTimelineSection = async (limitedFarms: Farm[]) => {
+        setSectionLoading((current) => ({ ...current, timeline: true }));
+        try {
+          const timelineResults = await Promise.allSettled(
+            limitedFarms.map(async (farm) => {
+              const timelineEntries = await listFarmTimeline(state.token!, farm.id, 4);
+              return timelineEntries.map((entry) => ({ ...entry, farm }));
+            }),
+          );
 
-            updateDashboard((current) => ({
-              ...current,
-              recommendations,
-            }));
-            appendPartialErrors(partialErrors);
-          } finally {
-            finishSection("recommendations");
-          }
-        };
-
-        const loadWeatherSection = async () => {
-          try {
-            const weatherResults = await Promise.allSettled(
-              limitedFarms.slice(0, 4).map(async (farm) => ({
-                ...(await getCachedFarmWeather(state.token!, farm.id)),
-                farm,
-              })),
-            );
-
-            const partialErrors: string[] = [];
-            const weatherSummaries = weatherResults.flatMap((result) => {
+          const errors: string[] = [];
+          const timeline = timelineResults
+            .flatMap((result) => {
               if (result.status === "fulfilled") {
-                return [result.value];
+                return result.value;
               }
-              partialErrors.push(summarizePartialError("Weather", result.reason));
+              errors.push(summarizePartialError("Timeline", result.reason));
               return [];
-            });
+            })
+            .sort(
+              (left, right) =>
+                new Date(right.created_at).getTime() -
+                new Date(left.created_at).getTime(),
+            )
+            .slice(0, 6);
 
-            updateDashboard((current) => ({
-              ...current,
-              weatherSummaries,
-            }));
-            appendPartialErrors(partialErrors);
-          } finally {
-            finishSection("weather");
-          }
-        };
-
-        const loadTimelineSection = async () => {
-          try {
-            const timelineResults = await Promise.allSettled(
-              limitedFarms.map(async (farm) => {
-                const timelineEntries = await listFarmTimeline(state.token!, farm.id, 4);
-                return timelineEntries.map((entry) => ({ ...entry, farm }));
-              }),
-            );
-
-            const partialErrors: string[] = [];
-            const timeline = timelineResults
-              .flatMap((result) => {
-                if (result.status === "fulfilled") {
-                  return result.value;
-                }
-                partialErrors.push(summarizePartialError("Timeline", result.reason));
-                return [];
-              })
-              .sort(
-                (left, right) =>
-                  new Date(right.created_at).getTime() -
-                  new Date(left.created_at).getTime(),
-              )
-              .slice(0, 6);
-
-            updateDashboard((current) => ({
-              ...current,
-              timeline,
-            }));
-            appendPartialErrors(partialErrors);
-          } finally {
-            finishSection("timeline");
-          }
-        };
-
-        void Promise.allSettled([
-          loadNotificationsSection(),
-          limitedFarms.length ? loadRecommendationsSection() : Promise.resolve(),
-          limitedFarms.length ? loadWeatherSection() : Promise.resolve(),
-          limitedFarms.length ? loadTimelineSection() : Promise.resolve(),
-        ]);
-      } catch (loadError) {
-        if (cancelled) {
-          return;
+          updateDashboard((current) => ({
+            ...current,
+            timeline,
+          }));
+          setSectionError("timeline", errors[0] || null);
+        } finally {
+          finishSection("timeline");
         }
+      };
 
-        setSectionLoading(createSectionLoadingState(false));
-        if (loadError instanceof ApiError && loadError.status === 403) {
-          setError(
-            "Dashboard data is only available for farmer accounts because the farm-backed APIs require farmer access.",
-          );
-        } else {
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : "Unable to load the dashboard right now.",
-          );
+      const loadFarmsSection = async () => {
+        try {
+          const [farmResult] = await Promise.allSettled([listFarms(state.token!)]);
+
+          if (farmResult.status !== "fulfilled") {
+            if (farmResult.reason instanceof ApiError && farmResult.reason.status === 403) {
+              setError(
+                "Dashboard data is only available for farmer accounts because the farm-backed APIs require farmer access.",
+              );
+              setStatus("error");
+            }
+            setSectionError("farms", summarizePartialError("Farms", farmResult.reason));
+            return;
+          }
+
+          const farms = farmResult.value;
+          const limitedFarms = farms.slice(0, 6);
+          updateDashboard((current) => ({
+            ...current,
+            farms,
+          }));
+          setSectionError("farms", null);
+
+          if (limitedFarms.length) {
+            void Promise.allSettled([
+              loadRecommendationsSection(limitedFarms),
+              loadWeatherSection(limitedFarms),
+              loadTimelineSection(limitedFarms),
+            ]);
+          }
+        } finally {
+          finishSection("farms");
         }
-        setStatus("error");
-      }
+      };
+
+      void Promise.allSettled([loadFarmsSection(), loadNotificationsSection()]);
     };
 
     void loadDashboard();
@@ -335,7 +358,7 @@ export function WorkspacePage() {
   const unreadNotifications =
     dashboard?.notifications.filter((notification) => !notification.is_read).length ?? 0;
   const isDashboardBusy =
-    status === "loading" ||
+    sectionLoading.farms ||
     sectionLoading.notifications ||
     sectionLoading.recommendations ||
     sectionLoading.weather ||
@@ -371,35 +394,33 @@ export function WorkspacePage() {
         />
       ) : null}
 
-      {status === "ready" && dashboard?.partialErrors.length ? (
-        <InlineAlert
-          tone="warning"
-          title="Some sections are incomplete"
-          message={dashboard.partialErrors.join(" | ")}
-        />
-      ) : null}
-
       <section className="metric-grid">
         <article className="metric-card">
           <div className="metric-label">Farms</div>
           <div className="metric-value">
-            {status === "ready" ? dashboard?.farms.length ?? 0 : "--"}
+            {sectionLoading.farms && !dashboard?.farms.length
+              ? "--"
+              : dashboard?.farms.length ?? 0}
           </div>
         </article>
         <article className="metric-card">
           <div className="metric-label">Crops tracked</div>
-          <div className="metric-value">{status === "ready" ? uniqueCrops : "--"}</div>
+          <div className="metric-value">
+            {sectionLoading.farms && !dashboard?.farms.length ? "--" : uniqueCrops}
+          </div>
         </article>
         <article className="metric-card">
           <div className="metric-label">Land area</div>
           <div className="metric-value">
-            {status === "ready" ? `${formatAcreage(String(totalAcreage))} ac` : "--"}
+            {sectionLoading.farms && !dashboard?.farms.length
+              ? "--"
+              : `${formatAcreage(String(totalAcreage))} ac`}
           </div>
         </article>
         <article className="metric-card">
           <div className="metric-label">Unread notifications</div>
           <div className="metric-value">
-            {status === "ready" && !sectionLoading.notifications
+            {!sectionLoading.notifications
               ? unreadNotifications
               : "--"}
           </div>
@@ -424,8 +445,14 @@ export function WorkspacePage() {
               <h3 className="surface-title">Farm summary</h3>
             </div>
           </div>
-          {status === "loading" ? (
+          {sectionLoading.farms && !dashboard?.farms.length ? (
             <p className="surface-copy">Loading farms...</p>
+          ) : sectionErrors.farms ? (
+            <InlineAlert
+              title="Farm summary unavailable"
+              message={sectionErrors.farms}
+              tone="warning"
+            />
           ) : (
             <div className="list-stack">
               {dashboard?.farms.slice(0, 5).map((farm) => (
@@ -450,7 +477,7 @@ export function WorkspacePage() {
               <h3 className="surface-title">Latest recommendations</h3>
             </div>
           </div>
-          {status === "loading" || sectionLoading.recommendations ? (
+          {sectionLoading.recommendations && !dashboard?.recommendations.length ? (
             <p className="surface-copy">Loading recommendations...</p>
           ) : dashboard?.recommendations.length ? (
             <div className="list-stack">
@@ -475,6 +502,12 @@ export function WorkspacePage() {
                 );
               })}
             </div>
+          ) : sectionErrors.recommendations ? (
+            <InlineAlert
+              title="Recommendations unavailable"
+              message={sectionErrors.recommendations}
+              tone="warning"
+            />
           ) : (
             <p className="surface-copy">No recommendations generated yet.</p>
           )}
@@ -487,7 +520,7 @@ export function WorkspacePage() {
               <h3 className="surface-title">Weather summary</h3>
             </div>
           </div>
-          {status === "loading" || sectionLoading.weather ? (
+          {sectionLoading.weather && !dashboard?.weatherSummaries.length ? (
             <p className="surface-copy">Loading weather summaries...</p>
           ) : dashboard?.weatherSummaries.length ? (
             <div className="list-stack">
@@ -502,6 +535,8 @@ export function WorkspacePage() {
                     {weather.current.wind_speed_kmh !== null
                       ? ` | Wind ${weather.current.wind_speed_kmh.toFixed(1)} km/h`
                       : ""}
+                    {` | Updated ${formatDate(weather.fetched_at)}`}
+                    {weather.is_stale ? " | Cached" : ""}
                   </div>
                   <p className="list-body">
                     {weather.advice.irrigation[0] ||
@@ -512,6 +547,12 @@ export function WorkspacePage() {
                 </div>
               ))}
             </div>
+          ) : sectionErrors.weather ? (
+            <InlineAlert
+              title="Weather temporarily unavailable"
+              message={sectionErrors.weather}
+              tone="warning"
+            />
           ) : (
             <p className="surface-copy">Weather summaries are not available yet.</p>
           )}
@@ -524,7 +565,7 @@ export function WorkspacePage() {
               <h3 className="surface-title">Recent notifications</h3>
             </div>
           </div>
-          {status === "loading" || sectionLoading.notifications ? (
+          {sectionLoading.notifications && !dashboard?.notifications.length ? (
             <p className="surface-copy">Loading notifications...</p>
           ) : dashboard?.notifications.length ? (
             <div className="list-stack">
@@ -543,6 +584,12 @@ export function WorkspacePage() {
                 </div>
               ))}
             </div>
+          ) : sectionErrors.notifications ? (
+            <InlineAlert
+              title="Notifications unavailable"
+              message={sectionErrors.notifications}
+              tone="warning"
+            />
           ) : (
             <p className="surface-copy">No notifications yet.</p>
           )}
@@ -555,7 +602,7 @@ export function WorkspacePage() {
               <h3 className="surface-title">Recent activity</h3>
             </div>
           </div>
-          {status === "loading" || sectionLoading.timeline ? (
+          {sectionLoading.timeline && !dashboard?.timeline.length ? (
             <p className="surface-copy">Loading timeline activity...</p>
           ) : dashboard?.timeline.length ? (
             <div className="timeline-list">
@@ -577,6 +624,12 @@ export function WorkspacePage() {
                 </div>
               ))}
             </div>
+          ) : sectionErrors.timeline ? (
+            <InlineAlert
+              title="Timeline unavailable"
+              message={sectionErrors.timeline}
+              tone="warning"
+            />
           ) : (
             <p className="surface-copy">No recent timeline activity yet.</p>
           )}

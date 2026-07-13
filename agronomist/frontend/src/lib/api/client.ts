@@ -9,7 +9,11 @@ export const API_BASE_URL = (
   configuredBaseUrl
 ).replace(/\/+$/, "");
 
-const parsedRequestTimeoutMs = Number(import.meta.env.VITE_API_REQUEST_TIMEOUT_MS || 20000);
+const parsedRequestTimeoutMs = Number(
+  import.meta.env.VITE_API_TIMEOUT_MS ||
+    import.meta.env.VITE_API_REQUEST_TIMEOUT_MS ||
+    20000,
+);
 const API_REQUEST_TIMEOUT_MS =
   Number.isFinite(parsedRequestTimeoutMs) && parsedRequestTimeoutMs > 0
     ? parsedRequestTimeoutMs
@@ -47,6 +51,20 @@ export class ApiResponseParseError extends Error {
     this.name = "ApiResponseParseError";
     this.status = status;
     this.rawBody = rawBody;
+  }
+}
+
+export class ApiTimeoutError extends Error {
+  constructor(message = "The API request timed out.") {
+    super(message);
+    this.name = "ApiTimeoutError";
+  }
+}
+
+export class ApiNetworkError extends Error {
+  constructor(message = "Unable to reach the API server.") {
+    super(message);
+    this.name = "ApiNetworkError";
   }
 }
 
@@ -171,7 +189,24 @@ function getErrorDetail(data: unknown, response: Response): string {
     return directMessage;
   }
 
-  return `Request failed with status ${response.status}`;
+  switch (response.status) {
+    case 401:
+      return "Please sign in again.";
+    case 403:
+      return "You do not have access to this resource.";
+    case 404:
+      return "The requested resource was not found.";
+    case 422:
+      return "Please check the submitted details and try again.";
+    case 429:
+      return "The service is receiving too many requests. Please wait a moment and try again.";
+    case 500:
+    case 502:
+    case 503:
+      return "The service is temporarily unavailable. Please try again shortly.";
+    default:
+      return `Request failed with status ${response.status}`;
+  }
 }
 
 export async function apiRequest<T>(
@@ -236,13 +271,12 @@ export async function apiRequest<T>(
       abortController.signal.aborted ||
       (error instanceof DOMException && error.name === "AbortError")
     ) {
-      throw new Error("The API request timed out.");
+      throw new ApiTimeoutError();
     }
-    throw new Error(
-      error instanceof Error && error.message
-        ? `Unable to reach the API server: ${error.message}`
-        : "Unable to reach the API server.",
-    );
+    if (import.meta.env.DEV) {
+      console.error("API network error", error);
+    }
+    throw new ApiNetworkError();
   }
 
   window.clearTimeout(timeoutHandle);

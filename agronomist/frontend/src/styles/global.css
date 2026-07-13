@@ -783,6 +783,50 @@ button {
   grid-column: span 2;
 }
 
+.location-picker {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel-strong);
+}
+
+.farm-location-map {
+  position: relative;
+  min-height: 360px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg);
+}
+
+.map-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.selected-coordinate-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--accent-soft);
+}
+
+.location-picker .button {
+  min-width: 180px;
+}
+
+.leaflet-container {
+  font: inherit;
+}
+
 .metric-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
@@ -1038,5 +1082,22 @@ button {
 
   .hero-title {
     max-width: none;
+  }
+
+  .farm-location-map {
+    min-height: 320px;
+  }
+
+  .selected-coordinate-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .location-picker .panel-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .location-picker .button {
+    width: 100%;
   }
 }

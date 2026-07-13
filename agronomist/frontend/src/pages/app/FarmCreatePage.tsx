@@ -83,6 +83,7 @@ export function FarmCreatePage() {
         ) : null}
 
         <FarmForm
+          authToken={state.token}
           cancelTo="/app/farms"
           onChange={(field, value) =>
             setValues((current) => ({ ...current, [field]: value }))

@@ -58,6 +58,18 @@ Important variables:
 - `CORS_ORIGINS`
 - `UPLOAD_DIR`
 - `KNOWLEDGE_STORAGE_DIR`
+- `WEATHER_CACHE_TTL_SECONDS`
+- `WEATHER_STALE_TTL_SECONDS`
+- `WEATHER_MAX_RETRIES`
+- `WEATHER_PROVIDER_COOLDOWN_SECONDS`
+- `GEOCODING_PROVIDER`
+- `NOMINATIM_USER_AGENT`
+- `GEOCODING_CACHE_TTL_SECONDS`
+- `GEOCODING_MIN_INTERVAL_MS`
+
+Farm reverse geocoding is behind a provider adapter. The development/MVP provider
+is Nominatim, with backend caching and rate limiting; production can switch
+providers by replacing the adapter without changing farm APIs.
 
 ## Deployment
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -117,7 +118,8 @@ ARTICLE_SOURCE_TYPES = {"news", "government_advisory", "research"}
 ALERT_SOURCE_TYPES = {"pest_alert", "disease_alert", "outbreak_alert"}
 
 weather_cache: TTLCache[WeatherIntelligenceRead] = TTLCache(
-    settings.farm_weather_cache_ttl_seconds,
+    settings.weather_cache_ttl_seconds or settings.farm_weather_cache_ttl_seconds,
+    settings.weather_stale_ttl_seconds,
 )
 market_cache: TTLCache[MarketIntelligenceResponseRead] = TTLCache(
     settings.farm_market_cache_ttl_seconds,
@@ -133,6 +135,11 @@ news_cache: TTLCache[NewsIntelligenceResponseRead] = TTLCache(
 )
 risk_cache: TTLCache[FarmRiskRead] = TTLCache(settings.farm_risk_cache_ttl_seconds)
 provider_health_cache: TTLCache[ProviderHealthRead] = TTLCache(86400)
+weather_inflight_lock = threading.Lock()
+weather_inflight: dict[str, threading.Event] = {}
+weather_refresh_lock = threading.Lock()
+weather_refreshing: set[str] = set()
+provider_cooldowns: dict[str, float] = {}
 
 
 @dataclass(frozen=True)
@@ -159,8 +166,13 @@ class BaseProviderAdapter:
         latency_ms = None
         last_error: Exception | None = None
         started = time.monotonic()
+        cooldown_key = f"{self.provider_type}:{self.provider_name}"
+        cooldown_until = provider_cooldowns.get(cooldown_key, 0)
+        if cooldown_until > started:
+            raise IntelligenceSourceError(f"{self.provider_name} is temporarily unavailable")
 
-        for attempt in range(settings.intelligence_request_retries):
+        max_attempts = max(settings.weather_max_retries + 1, 1)
+        for attempt in range(max_attempts):
             try:
                 request = Request(url, headers={"User-Agent": "ai-agronomist/0.1"})
                 with urlopen(
@@ -170,27 +182,56 @@ class BaseProviderAdapter:
                     payload = json.loads(response.read().decode("utf-8"))
                 latency_ms = int((time.monotonic() - started) * 1000)
                 self._record_health("healthy", latency_ms=latency_ms)
+                provider_cooldowns.pop(cooldown_key, None)
+                logger.info(
+                    "Provider request completed: provider=%s type=%s status=healthy latency_ms=%s",
+                    self.provider_name,
+                    self.provider_type,
+                    latency_ms,
+                )
                 return payload
             except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
                 last_error = exc
-                backoff_seconds = min(2**attempt, 8)
-                logger.warning(
-                    "Provider request failed: provider=%s type=%s url=%s attempt=%s backoff_seconds=%s error=%s",
-                    self.provider_name,
-                    self.provider_type,
-                    url,
-                    attempt + 1,
-                    backoff_seconds,
-                    str(exc),
-                )
-                if attempt < settings.intelligence_request_retries - 1:
-                    time.sleep(backoff_seconds)
+                status_code = exc.code if isinstance(exc, HTTPError) else None
+                transient_status = status_code in {429, 500, 502, 503}
+                transient_network = isinstance(exc, (URLError, TimeoutError))
+                if not (transient_status or transient_network) or attempt >= max_attempts - 1:
+                    break
+
+                retry_after = None
+                if isinstance(exc, HTTPError):
+                    retry_after_header = exc.headers.get("Retry-After")
+                    if retry_after_header:
+                        try:
+                            retry_after = max(0, int(retry_after_header))
+                        except ValueError:
+                            retry_after = None
+
+                backoff_seconds = retry_after if retry_after is not None else min(2**attempt, 8)
+                time.sleep(min(backoff_seconds, settings.intelligence_request_timeout_seconds))
 
         latency_ms = int((time.monotonic() - started) * 1000)
+        status_code = last_error.code if isinstance(last_error, HTTPError) else None
+        previous = self.health()
+        consecutive_failures = (previous.consecutive_failures if previous else 0) + 1
+        if status_code in {429, 500, 502, 503} and consecutive_failures >= 2:
+            provider_cooldowns[cooldown_key] = (
+                time.monotonic() + settings.weather_provider_cooldown_seconds
+            )
         self._record_health(
             "unhealthy",
-            detail=str(last_error) if last_error else "request failed",
+            detail=f"HTTP {status_code}" if status_code else "provider request failed",
             latency_ms=latency_ms,
+        )
+        logger.warning(
+            "Provider request failed: provider=%s type=%s status=%s latency_ms=%s cooldown_seconds=%s",
+            self.provider_name,
+            self.provider_type,
+            status_code or "network_error",
+            latency_ms,
+            settings.weather_provider_cooldown_seconds
+            if provider_cooldowns.get(cooldown_key, 0) > time.monotonic()
+            else 0,
         )
         raise IntelligenceSourceError(
             f"{self.provider_name} request failed",
@@ -240,6 +281,17 @@ class OpenMeteoWeatherAdapter(BaseProviderAdapter):
     provider_type = "weather"
 
     def resolve_location(self, farm: Farm) -> WeatherLocationRead:
+        if farm.latitude is not None and farm.longitude is not None:
+            return WeatherLocationRead(
+                name=farm.formatted_address or farm.location,
+                latitude=float(farm.latitude),
+                longitude=float(farm.longitude),
+                timezone="auto",
+                country=farm.country,
+                admin1=farm.state,
+                admin2=farm.district,
+            )
+
         for query in self._build_location_queries(farm):
             payload = self._fetch_json(
                 f"{settings.open_meteo_geocoding_url}?{urlencode({'name': query, 'count': 1, 'language': 'en', 'format': 'json'})}",
@@ -345,7 +397,22 @@ class OpenWeatherWeatherAdapter(BaseProviderAdapter):
         )
 
     def _resolve_location(self, farm: Farm) -> WeatherLocationRead:
-        query = ", ".join(part for part in [farm.village, farm.district, farm.state] if part)
+        if farm.latitude is not None and farm.longitude is not None:
+            return WeatherLocationRead(
+                name=farm.formatted_address or farm.location,
+                latitude=float(farm.latitude),
+                longitude=float(farm.longitude),
+                timezone="auto",
+                country=farm.country,
+                admin1=farm.state,
+                admin2=farm.district,
+            )
+
+        query = (
+            f"{float(farm.latitude)},{float(farm.longitude)}"
+            if farm.latitude is not None and farm.longitude is not None
+            else ", ".join(part for part in [farm.village, farm.district, farm.state] if part)
+        )
         payload = self._fetch_json_any(
             f"{settings.openweather_geocoding_url}?{urlencode({'q': query, 'limit': 1, 'appid': settings.openweather_api_key})}",
         )
@@ -623,19 +690,95 @@ class FarmIntelligenceService:
         farm: Farm | None = None,
     ) -> WeatherIntelligenceRead:
         farm = farm or self._get_farm(user_id=user_id, farm_id=farm_id)
-        cache_key = f"{farm.id}"
+        cache_key = self._weather_cache_key(farm)
         cached = weather_cache.get(cache_key)
         if cached is not None:
-            return cached
+            return cached.model_copy(update={"is_stale": False, "cache_status": "fresh"})
 
         stale = weather_cache.get_stale(cache_key)
+        if stale is not None:
+            self._schedule_weather_refresh(
+                user_id=user_id,
+                farm_id=farm_id,
+                farm=farm,
+                cache_key=cache_key,
+            )
+            return stale.model_copy(
+                update={
+                    "provider_health": self._collect_provider_health(),
+                    "unavailable": {"weather": "Using cached weather while refreshing"},
+                    "is_stale": True,
+                    "cache_status": "stale",
+                    "generated_at": datetime.now(timezone.utc),
+                }
+            )
+
+        with weather_inflight_lock:
+            inflight = weather_inflight.get(cache_key)
+            is_owner = inflight is None
+            if is_owner:
+                inflight = threading.Event()
+                weather_inflight[cache_key] = inflight
+
+        if not is_owner:
+            inflight.wait(settings.intelligence_request_timeout_seconds + 5)
+            cached_after_wait = weather_cache.get(cache_key)
+            if cached_after_wait is not None:
+                return cached_after_wait.model_copy(
+                    update={"is_stale": False, "cache_status": "fresh"},
+                )
+            stale_after_wait = weather_cache.get_stale(cache_key)
+            if stale_after_wait is not None:
+                return stale_after_wait.model_copy(
+                    update={
+                        "is_stale": True,
+                        "cache_status": "stale",
+                        "unavailable": {"weather": "Using cached weather"},
+                    }
+                )
+            return self._unavailable_weather_intelligence(farm)
+
+        try:
+            response = self._fetch_weather_from_providers(farm)
+            weather_cache.set(cache_key, response)
+            return response
+        except (
+            IntelligenceSourceError,
+            WeatherLocationNotFoundError,
+            WeatherProviderError,
+            WeatherResponseParseError,
+        ) as exc:
+            logger.warning(
+                "Weather intelligence unavailable: farm_id=%s error=%s",
+                farm.id,
+                str(exc),
+            )
+            stale_after_failure = weather_cache.get_stale(cache_key)
+            if stale_after_failure is not None:
+                return stale_after_failure.model_copy(
+                    update={
+                        "provider_health": self._collect_provider_health(),
+                        "unavailable": {"weather": "Using cached weather"},
+                        "is_stale": True,
+                        "cache_status": "stale",
+                        "generated_at": datetime.now(timezone.utc),
+                    }
+                )
+            return self._unavailable_weather_intelligence(farm)
+        finally:
+            with weather_inflight_lock:
+                event = weather_inflight.pop(cache_key, None)
+                if event is not None:
+                    event.set()
+
+    def _fetch_weather_from_providers(self, farm: Farm) -> WeatherIntelligenceRead:
         failures: list[str] = []
         for adapter in self.weather_adapters:
             try:
                 if hasattr(adapter, "is_configured") and not adapter.is_configured():
                     continue
                 bundle = adapter.fetch_weather(farm)
-                response = WeatherIntelligenceRead(
+                return WeatherIntelligenceRead(
                     farm_id=farm.id,
                     farm_name=farm.farm_name,
                     crop=farm.crop,
@@ -644,17 +787,17 @@ class FarmIntelligenceService:
                     forecast=bundle.forecast,
                     provider_health=self._collect_provider_health(),
                     unavailable={},
+                    is_stale=False,
+                    cache_status="fresh",
                     generated_at=datetime.now(timezone.utc),
                 )
-                weather_cache.set(cache_key, response)
-                return response
             except (
                 IntelligenceSourceError,
                 WeatherLocationNotFoundError,
                 WeatherProviderError,
                 WeatherResponseParseError,
             ) as exc:
-                failures.append(f"{adapter.provider_name}: {exc}")
+                failures.append(adapter.provider_name)
                 logger.warning(
                     "Weather provider failed: provider=%s farm_id=%s error=%s",
                     adapter.provider_name,
@@ -662,16 +805,76 @@ class FarmIntelligenceService:
                     str(exc),
                 )
 
-        if stale is not None:
-            return stale.model_copy(
-                update={
-                    "provider_health": self._collect_provider_health(),
-                    "unavailable": {"weather": "; ".join(failures) or "Using cached weather"},
-                    "generated_at": datetime.now(timezone.utc),
-                }
-            )
+        raise WeatherProviderError(
+            "Weather provider temporarily unavailable"
+            if failures
+            else "No weather provider is configured"
+        )
 
-        raise WeatherProviderError("; ".join(failures) or "No weather provider succeeded")
+    def _schedule_weather_refresh(
+        self,
+        *,
+        user_id: uuid.UUID,
+        farm_id: uuid.UUID,
+        farm: Farm,
+        cache_key: str,
+    ) -> None:
+        del user_id, farm_id
+        with weather_refresh_lock:
+            if cache_key in weather_refreshing:
+                return
+            weather_refreshing.add(cache_key)
+
+        def refresh() -> None:
+            try:
+                response = self._fetch_weather_from_providers(farm)
+                weather_cache.set(cache_key, response)
+            except Exception as exc:
+                logger.warning(
+                    "Background weather refresh failed: farm_id=%s error=%s",
+                    farm.id,
+                    str(exc),
+                )
+            finally:
+                with weather_refresh_lock:
+                    weather_refreshing.discard(cache_key)
+
+        threading.Thread(target=refresh, daemon=True).start()
+
+    def _weather_cache_key(self, farm: Farm) -> str:
+        if farm.latitude is not None and farm.longitude is not None:
+            latitude = round(float(farm.latitude), 3)
+            longitude = round(float(farm.longitude), 3)
+            return f"weather:{latitude}:{longitude}:7:{','.join(CURRENT_VARIABLES)}:{','.join(DAILY_VARIABLES)}"
+        return f"weather:farm:{farm.id}"
+
+    def _unavailable_weather_intelligence(self, farm: Farm) -> WeatherIntelligenceRead:
+        return WeatherIntelligenceRead(
+            farm_id=farm.id,
+            farm_name=farm.farm_name,
+            crop=farm.crop,
+            resolved_location=self._fallback_weather_location(farm),
+            weather=None,
+            forecast=[],
+            provider_health=self._collect_provider_health(),
+            unavailable={"weather": "Weather temporarily unavailable"},
+            is_stale=False,
+            cache_status="unavailable",
+            generated_at=datetime.now(timezone.utc),
+        )
+
+    def _fallback_weather_location(self, farm: Farm) -> WeatherLocationRead | None:
+        if farm.latitude is None or farm.longitude is None:
+            return None
+        return WeatherLocationRead(
+            name=farm.formatted_address or farm.location,
+            latitude=float(farm.latitude),
+            longitude=float(farm.longitude),
+            timezone="auto",
+            country=farm.country,
+            admin1=farm.state,
+            admin2=farm.district,
+        )
 
     def get_market_intelligence(
         self,
@@ -912,8 +1115,39 @@ class FarmIntelligenceService:
         farm = self._get_farm(user_id=user_id, farm_id=farm_id)
         weather = self.get_weather_intelligence(user_id=user_id, farm_id=farm_id, farm=farm)
         if weather.weather is None or weather.resolved_location is None:
-            raise WeatherProviderError(
-                weather.unavailable.get("weather") or "Weather data is unavailable",
+            current = CurrentWeatherRead(
+                time=datetime.now(timezone.utc).isoformat(),
+                condition="Weather temporarily unavailable",
+            )
+            return FarmWeatherRead(
+                farm_id=farm.id,
+                farm_name=farm.farm_name,
+                crop=farm.crop,
+                resolved_location=weather.resolved_location
+                or WeatherLocationRead(
+                    name=farm.formatted_address or farm.location,
+                    latitude=float(farm.latitude or 0),
+                    longitude=float(farm.longitude or 0),
+                    timezone="auto",
+                    country=farm.country,
+                    admin1=farm.state,
+                    admin2=farm.district,
+                ),
+                current=current,
+                forecast=[],
+                advice=FarmWeatherAdviceRead(
+                    irrigation=[],
+                    rainfall=[],
+                    spraying=[],
+                    heat=[],
+                    wind=[],
+                    humidity=[],
+                ),
+                source="weather",
+                fetched_at=weather.generated_at,
+                is_stale=weather.is_stale,
+                unavailable="Weather temporarily unavailable",
+                cache_status=weather.cache_status,
             )
         advice = self._build_advice(
             farm=farm,
@@ -939,6 +1173,9 @@ class FarmIntelligenceService:
             )
             or "weather",
             fetched_at=weather.generated_at,
+            is_stale=weather.is_stale,
+            unavailable=weather.unavailable.get("weather"),
+            cache_status=weather.cache_status,
         )
 
     def build_ai_context(
@@ -1002,11 +1239,13 @@ class FarmIntelligenceService:
                 farm_id=farm.id,
                 farm_name=farm.farm_name,
                 crop=farm.crop,
-                resolved_location=None,
+                resolved_location=self._fallback_weather_location(farm),
                 weather=None,
                 forecast=[],
                 provider_health=self._collect_provider_health(),
-                unavailable={"weather": str(exc)},
+                unavailable={"weather": "Weather temporarily unavailable"},
+                is_stale=False,
+                cache_status="unavailable",
                 generated_at=datetime.now(timezone.utc),
             )
 

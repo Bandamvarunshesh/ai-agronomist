@@ -61,6 +61,14 @@ Set these in Render:
 | `CORS_ORIGINS` | yes | comma-separated or JSON list of Vercel origins |
 | `UPLOAD_DIR` | yes | `/var/data/uploads` |
 | `KNOWLEDGE_STORAGE_DIR` | yes | `/var/data/knowledge_uploads` |
+| `WEATHER_CACHE_TTL_SECONDS` | recommended | `900` for 15-minute weather freshness |
+| `WEATHER_STALE_TTL_SECONDS` | recommended | `3600` to serve stale weather during provider outages |
+| `WEATHER_MAX_RETRIES` | recommended | `1` retry for transient weather provider failures |
+| `WEATHER_PROVIDER_COOLDOWN_SECONDS` | recommended | `300` cooldown after repeated 429/5xx responses |
+| `GEOCODING_PROVIDER` | recommended | `nominatim` for MVP/dev, replaceable with a hosted provider adapter later |
+| `NOMINATIM_USER_AGENT` | recommended | identifiable User-Agent for Nominatim reverse geocoding requests |
+| `GEOCODING_CACHE_TTL_SECONDS` | recommended | `86400` to avoid repeated reverse lookups for the same coordinates |
+| `GEOCODING_MIN_INTERVAL_MS` | recommended | `1100` to rate limit public Nominatim requests |
 
 Useful optional variables:
 
@@ -118,15 +126,18 @@ The repo includes [`frontend/vercel.json`](frontend/vercel.json).
 | Variable | Required | Notes |
 | --- | --- | --- |
 | `VITE_API_BASE_URL` | yes | full backend API URL, for example `https://<render-service>.onrender.com/api/v1` |
+| `VITE_API_TIMEOUT_MS` | recommended | frontend API timeout in milliseconds |
 
 Useful optional variables:
 
 | Variable | Default |
 | --- | --- |
-| `VITE_API_REQUEST_TIMEOUT_MS` | `20000` |
+| `VITE_API_REQUEST_TIMEOUT_MS` | `20000` legacy alias for `VITE_API_TIMEOUT_MS` |
 | `VITE_SOURCEMAP` | `false` |
 
 Production builds fail fast if `VITE_API_BASE_URL` is missing or not an absolute URL.
+Farm create/edit maps use OpenStreetMap tiles through Leaflet and do not require
+Google Maps, billing, or browser map API keys.
 
 ## 4. CORS
 

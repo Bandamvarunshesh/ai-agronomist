@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, chat, diagnosis, escalations, farm_images, farm_intelligence, farms, health, users
+from app.api.v1 import auth, chat, diagnosis, escalations, farm_images, farm_intelligence, farms, geocoding, health, users
 from app.api.v1 import intelligence, knowledge, news
 from app.api.v1 import notifications
 from app.api.v1 import recommendations
@@ -17,6 +17,7 @@ api_router.include_router(escalations.router)
 api_router.include_router(farm_images.router)
 api_router.include_router(farm_intelligence.router)
 api_router.include_router(farms.router)
+api_router.include_router(geocoding.router)
 api_router.include_router(health.router)
 api_router.include_router(intelligence.router)
 api_router.include_router(knowledge.router)

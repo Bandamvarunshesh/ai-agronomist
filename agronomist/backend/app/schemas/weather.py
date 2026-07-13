@@ -66,3 +66,6 @@ class FarmWeatherRead(BaseModel):
     advice: FarmWeatherAdviceRead
     source: str
     fetched_at: datetime
+    is_stale: bool = False
+    unavailable: Optional[str] = None
+    cache_status: str = "fresh"

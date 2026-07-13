@@ -19,6 +19,18 @@ class Farm(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "land_size_acres >= 0",
             name="land_size_acres_non_negative",
         ),
+        CheckConstraint(
+            "latitude IS NULL OR latitude BETWEEN -90 AND 90",
+            name="ck_farms_latitude_range",
+        ),
+        CheckConstraint(
+            "longitude IS NULL OR longitude BETWEEN -180 AND 180",
+            name="ck_farms_longitude_range",
+        ),
+        CheckConstraint(
+            "location_source IN ('current_location', 'map_selection', 'manual')",
+            name="ck_farms_location_source",
+        ),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -31,8 +43,15 @@ class Farm(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     crop: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     location: Mapped[str] = mapped_column(String(255), nullable=False)
     village: Mapped[str] = mapped_column(String(100), nullable=False)
+    locality: Mapped[Optional[str]] = mapped_column(String(100))
     district: Mapped[str] = mapped_column(String(100), nullable=False)
     state: Mapped[str] = mapped_column(String(100), nullable=False)
+    latitude: Mapped[Optional[Decimal]] = mapped_column(Numeric(9, 6))
+    longitude: Mapped[Optional[Decimal]] = mapped_column(Numeric(9, 6))
+    formatted_address: Mapped[Optional[str]] = mapped_column(String(500))
+    country: Mapped[Optional[str]] = mapped_column(String(100))
+    postal_code: Mapped[Optional[str]] = mapped_column(String(20))
+    location_source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
     soil_type: Mapped[Optional[str]] = mapped_column(String(100))
     land_size_acres: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     irrigation_type: Mapped[Optional[str]] = mapped_column(String(100))

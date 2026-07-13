@@ -125,6 +125,8 @@ class WeatherIntelligenceRead(BaseModel):
     forecast: list[DailyWeatherRead] = Field(default_factory=list)
     provider_health: list[ProviderHealthRead] = Field(default_factory=list)
     unavailable: dict[str, str] = Field(default_factory=dict)
+    is_stale: bool = False
+    cache_status: str = "fresh"
     generated_at: datetime
 
 

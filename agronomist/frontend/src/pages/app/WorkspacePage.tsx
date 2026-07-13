@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../../auth/auth-store";
 import { InlineAlert } from "../../components/ui/Feedback";
 import {
-  getFarmWeather,
+  getCachedFarmWeather,
   listFarmRecommendations,
   listFarmTimeline,
   listFarms,
@@ -25,9 +25,36 @@ type DashboardData = {
   partialErrors: string[];
 };
 
+type SectionLoadingState = {
+  notifications: boolean;
+  recommendations: boolean;
+  weather: boolean;
+  timeline: boolean;
+};
+
 const relativeDateFormatter = new Intl.RelativeTimeFormat(undefined, {
   numeric: "auto",
 });
+
+function createEmptyDashboard(farms: Farm[]): DashboardData {
+  return {
+    farms,
+    notifications: [],
+    recommendations: [],
+    weatherSummaries: [],
+    timeline: [],
+    partialErrors: [],
+  };
+}
+
+function createSectionLoadingState(value: boolean): SectionLoadingState {
+  return {
+    notifications: value,
+    recommendations: value,
+    weather: value,
+    timeline: value,
+  };
+}
 
 function formatRelativeTime(value: string) {
   const target = new Date(value).getTime();
@@ -75,6 +102,9 @@ export function WorkspacePage() {
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [sectionLoading, setSectionLoading] = useState<SectionLoadingState>(() =>
+    createSectionLoadingState(false),
+  );
   const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
@@ -87,115 +117,189 @@ export function WorkspacePage() {
     const loadDashboard = async () => {
       setStatus("loading");
       setError(null);
+      setSectionLoading(createSectionLoadingState(false));
 
       try {
         const farms = await listFarms(state.token!);
         const limitedFarms = farms.slice(0, 6);
 
-        const notificationsPromise = Promise.allSettled([
-          listNotifications(state.token!, 6),
-        ]);
-        const recommendationsPromise = Promise.allSettled(
-          limitedFarms.map(async (farm) => {
-            const recommendations = await listFarmRecommendations(
-              state.token!,
-              farm.id,
-              1,
-            );
-            return recommendations[0]
-              ? ({ ...recommendations[0], farm } as FarmRecommendation & { farm: Farm })
-              : null;
-          }),
-        );
-        const weatherPromise = Promise.allSettled(
-          limitedFarms.slice(0, 4).map(async (farm) => ({
-            ...(await getFarmWeather(state.token!, farm.id)),
-            farm,
-          })),
-        );
-        const timelinePromise = Promise.allSettled(
-          limitedFarms.map(async (farm) => {
-            const timelineEntries = await listFarmTimeline(state.token!, farm.id, 4);
-            return timelineEntries.map((entry) => ({ ...entry, farm }));
-          }),
-        );
-
-        const [notificationResults, recommendationResults, weatherResults, timelineResults] =
-          await Promise.all([
-            notificationsPromise,
-            recommendationsPromise,
-            weatherPromise,
-            timelinePromise,
-          ]);
-
-        const partialErrors: string[] = [];
-        const notifications =
-          notificationResults[0]?.status === "fulfilled"
-            ? notificationResults[0].value
-            : [];
-        if (notificationResults[0]?.status === "rejected") {
-          partialErrors.push(
-            summarizePartialError("Notifications", notificationResults[0].reason),
-          );
-        }
-
-        const recommendations = recommendationResults
-          .flatMap((result) => {
-            if (result.status === "fulfilled") {
-              return result.value ? [result.value] : [];
-            }
-            partialErrors.push(
-              summarizePartialError("Recommendations", result.reason),
-            );
-            return [];
-          })
-          .sort(
-            (left, right) =>
-              new Date(right.generated_at).getTime() -
-              new Date(left.generated_at).getTime(),
-          );
-
-        const weatherSummaries = weatherResults.flatMap((result) => {
-          if (result.status === "fulfilled") {
-            return [result.value];
-          }
-          partialErrors.push(summarizePartialError("Weather", result.reason));
-          return [];
-        });
-
-        const timeline = timelineResults
-          .flatMap((result) => {
-            if (result.status === "fulfilled") {
-              return result.value;
-            }
-            partialErrors.push(summarizePartialError("Timeline", result.reason));
-            return [];
-          })
-          .sort(
-            (left, right) =>
-              new Date(right.created_at).getTime() -
-              new Date(left.created_at).getTime(),
-          )
-          .slice(0, 6);
-
         if (cancelled) {
           return;
         }
 
-        setDashboard({
-          farms,
-          notifications,
-          recommendations,
-          weatherSummaries,
-          timeline,
-          partialErrors,
-        });
+        setDashboard(createEmptyDashboard(farms));
         setStatus("ready");
+        setSectionLoading({
+          notifications: true,
+          recommendations: limitedFarms.length > 0,
+          weather: limitedFarms.length > 0,
+          timeline: limitedFarms.length > 0,
+        });
+
+        const updateDashboard = (updater: (current: DashboardData) => DashboardData) => {
+          if (cancelled) {
+            return;
+          }
+          setDashboard((current) => (current ? updater(current) : current));
+        };
+
+        const finishSection = (section: keyof SectionLoadingState) => {
+          if (cancelled) {
+            return;
+          }
+          setSectionLoading((current) => ({ ...current, [section]: false }));
+        };
+
+        const appendPartialErrors = (partialErrors: string[]) => {
+          if (!partialErrors.length) {
+            return;
+          }
+          updateDashboard((current) => ({
+            ...current,
+            partialErrors: [...current.partialErrors, ...partialErrors],
+          }));
+        };
+
+        const loadNotificationsSection = async () => {
+          try {
+            const [notificationResult] = await Promise.allSettled([
+              listNotifications(state.token!, 6),
+            ]);
+
+            if (notificationResult.status === "fulfilled") {
+              updateDashboard((current) => ({
+                ...current,
+                notifications: notificationResult.value,
+              }));
+            } else {
+              appendPartialErrors([
+                summarizePartialError("Notifications", notificationResult.reason),
+              ]);
+            }
+          } finally {
+            finishSection("notifications");
+          }
+        };
+
+        const loadRecommendationsSection = async () => {
+          try {
+            const recommendationResults = await Promise.allSettled(
+              limitedFarms.map(async (farm) => {
+                const recommendations = await listFarmRecommendations(
+                  state.token!,
+                  farm.id,
+                  1,
+                );
+                return recommendations[0]
+                  ? ({ ...recommendations[0], farm } as FarmRecommendation & {
+                      farm: Farm;
+                    })
+                  : null;
+              }),
+            );
+
+            const partialErrors: string[] = [];
+            const recommendations = recommendationResults
+              .flatMap((result) => {
+                if (result.status === "fulfilled") {
+                  return result.value ? [result.value] : [];
+                }
+                partialErrors.push(
+                  summarizePartialError("Recommendations", result.reason),
+                );
+                return [];
+              })
+              .sort(
+                (left, right) =>
+                  new Date(right.generated_at).getTime() -
+                  new Date(left.generated_at).getTime(),
+              );
+
+            updateDashboard((current) => ({
+              ...current,
+              recommendations,
+            }));
+            appendPartialErrors(partialErrors);
+          } finally {
+            finishSection("recommendations");
+          }
+        };
+
+        const loadWeatherSection = async () => {
+          try {
+            const weatherResults = await Promise.allSettled(
+              limitedFarms.slice(0, 4).map(async (farm) => ({
+                ...(await getCachedFarmWeather(state.token!, farm.id)),
+                farm,
+              })),
+            );
+
+            const partialErrors: string[] = [];
+            const weatherSummaries = weatherResults.flatMap((result) => {
+              if (result.status === "fulfilled") {
+                return [result.value];
+              }
+              partialErrors.push(summarizePartialError("Weather", result.reason));
+              return [];
+            });
+
+            updateDashboard((current) => ({
+              ...current,
+              weatherSummaries,
+            }));
+            appendPartialErrors(partialErrors);
+          } finally {
+            finishSection("weather");
+          }
+        };
+
+        const loadTimelineSection = async () => {
+          try {
+            const timelineResults = await Promise.allSettled(
+              limitedFarms.map(async (farm) => {
+                const timelineEntries = await listFarmTimeline(state.token!, farm.id, 4);
+                return timelineEntries.map((entry) => ({ ...entry, farm }));
+              }),
+            );
+
+            const partialErrors: string[] = [];
+            const timeline = timelineResults
+              .flatMap((result) => {
+                if (result.status === "fulfilled") {
+                  return result.value;
+                }
+                partialErrors.push(summarizePartialError("Timeline", result.reason));
+                return [];
+              })
+              .sort(
+                (left, right) =>
+                  new Date(right.created_at).getTime() -
+                  new Date(left.created_at).getTime(),
+              )
+              .slice(0, 6);
+
+            updateDashboard((current) => ({
+              ...current,
+              timeline,
+            }));
+            appendPartialErrors(partialErrors);
+          } finally {
+            finishSection("timeline");
+          }
+        };
+
+        void Promise.allSettled([
+          loadNotificationsSection(),
+          limitedFarms.length ? loadRecommendationsSection() : Promise.resolve(),
+          limitedFarms.length ? loadWeatherSection() : Promise.resolve(),
+          limitedFarms.length ? loadTimelineSection() : Promise.resolve(),
+        ]);
       } catch (loadError) {
         if (cancelled) {
           return;
         }
 
+        setSectionLoading(createSectionLoadingState(false));
         if (loadError instanceof ApiError && loadError.status === 403) {
           setError(
             "Dashboard data is only available for farmer accounts because the farm-backed APIs require farmer access.",
@@ -230,6 +334,12 @@ export function WorkspacePage() {
   const uniqueCrops = new Set(dashboard?.farms.map((farm) => farm.crop) ?? []).size;
   const unreadNotifications =
     dashboard?.notifications.filter((notification) => !notification.is_read).length ?? 0;
+  const isDashboardBusy =
+    status === "loading" ||
+    sectionLoading.notifications ||
+    sectionLoading.recommendations ||
+    sectionLoading.weather ||
+    sectionLoading.timeline;
 
   return (
     <section className="dashboard-stack">
@@ -244,7 +354,7 @@ export function WorkspacePage() {
         </div>
         <div className="button-row">
           <button className="button button-secondary" onClick={handleRefresh}>
-            {status === "loading" ? "Refreshing..." : "Refresh dashboard"}
+            {isDashboardBusy ? "Refreshing..." : "Refresh dashboard"}
           </button>
         </div>
       </article>
@@ -289,7 +399,9 @@ export function WorkspacePage() {
         <article className="metric-card">
           <div className="metric-label">Unread notifications</div>
           <div className="metric-value">
-            {status === "ready" ? unreadNotifications : "--"}
+            {status === "ready" && !sectionLoading.notifications
+              ? unreadNotifications
+              : "--"}
           </div>
         </article>
       </section>
@@ -338,7 +450,7 @@ export function WorkspacePage() {
               <h3 className="surface-title">Latest recommendations</h3>
             </div>
           </div>
-          {status === "loading" ? (
+          {status === "loading" || sectionLoading.recommendations ? (
             <p className="surface-copy">Loading recommendations...</p>
           ) : dashboard?.recommendations.length ? (
             <div className="list-stack">
@@ -375,7 +487,7 @@ export function WorkspacePage() {
               <h3 className="surface-title">Weather summary</h3>
             </div>
           </div>
-          {status === "loading" ? (
+          {status === "loading" || sectionLoading.weather ? (
             <p className="surface-copy">Loading weather summaries...</p>
           ) : dashboard?.weatherSummaries.length ? (
             <div className="list-stack">
@@ -412,7 +524,7 @@ export function WorkspacePage() {
               <h3 className="surface-title">Recent notifications</h3>
             </div>
           </div>
-          {status === "loading" ? (
+          {status === "loading" || sectionLoading.notifications ? (
             <p className="surface-copy">Loading notifications...</p>
           ) : dashboard?.notifications.length ? (
             <div className="list-stack">
@@ -443,7 +555,7 @@ export function WorkspacePage() {
               <h3 className="surface-title">Recent activity</h3>
             </div>
           </div>
-          {status === "loading" ? (
+          {status === "loading" || sectionLoading.timeline ? (
             <p className="surface-copy">Loading timeline activity...</p>
           ) : dashboard?.timeline.length ? (
             <div className="timeline-list">

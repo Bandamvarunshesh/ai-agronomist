@@ -128,6 +128,17 @@ export type TimelineEvent = {
   updated_at: string;
 };
 
+const WEATHER_CACHE_TTL_MS = 15 * 60 * 1000;
+const WEATHER_REQUEST_TIMEOUT_MS = 8000;
+
+const farmWeatherCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    value: FarmWeather;
+  }
+>();
+
 export async function listFarmRecommendations(
   authToken: string,
   farmId: string,
@@ -146,7 +157,39 @@ export async function getFarmWeather(authToken: string, farmId: string) {
   return apiRequest<FarmWeather>(`/farms/${farmId}/weather`, {
     method: "GET",
     authToken,
+    timeoutMs: WEATHER_REQUEST_TIMEOUT_MS,
   });
+}
+
+export async function getCachedFarmWeather(authToken: string, farmId: string) {
+  const cached = farmWeatherCache.get(farmId);
+  const now = Date.now();
+
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const weather = await getFarmWeather(authToken, farmId);
+      farmWeatherCache.set(farmId, {
+        expiresAt: Date.now() + WEATHER_CACHE_TTL_MS,
+        value: weather,
+      });
+      return weather;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (cached) {
+    return cached.value;
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Unable to load weather right now.");
 }
 
 export async function listNotifications(authToken: string, limit = 6) {

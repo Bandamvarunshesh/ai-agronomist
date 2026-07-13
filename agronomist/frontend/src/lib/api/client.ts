@@ -14,6 +14,7 @@ const API_REQUEST_TIMEOUT_MS =
   Number.isFinite(parsedRequestTimeoutMs) && parsedRequestTimeoutMs > 0
     ? parsedRequestTimeoutMs
     : 20000;
+const MAX_LOGGED_RESPONSE_BODY_CHARS = 20000;
 
 type JsonBody =
   | string
@@ -37,32 +38,137 @@ export class ApiError extends Error {
   }
 }
 
+export class ApiResponseParseError extends Error {
+  status: number;
+  rawBody: string;
+
+  constructor(status: number, message: string, rawBody: string) {
+    super(message);
+    this.name = "ApiResponseParseError";
+    this.status = status;
+    this.rawBody = rawBody;
+  }
+}
+
 type RequestOptions = Omit<RequestInit, "body"> & {
   authToken?: string | null;
   body?: BodyInit | JsonBody;
+  logResponseBody?: boolean;
+  timeoutMs?: number;
 };
 
-async function parseErrorBody(response: Response): Promise<unknown> {
-  const contentType = response.headers.get("content-type") || "";
+async function readResponseBody(
+  response: Response,
+  logResponseBody: boolean,
+): Promise<string> {
+  const text = await response.text();
 
-  if (contentType.includes("application/json")) {
-    return response.json();
+  if (logResponseBody) {
+    const body =
+      text.length > MAX_LOGGED_RESPONSE_BODY_CHARS
+        ? `${text.slice(0, MAX_LOGGED_RESPONSE_BODY_CHARS)}... [truncated]`
+        : text;
+    console.debug("API raw response body", {
+      url: response.url,
+      status: response.status,
+      body,
+    });
   }
 
-  const text = await response.text();
-  return text || null;
+  return text;
+}
+
+function parseJsonBody<T>(response: Response, rawBody: string): T {
+  if (!rawBody.trim()) {
+    throw new ApiResponseParseError(
+      response.status,
+      "API server returned an empty response.",
+      rawBody,
+    );
+  }
+
+  try {
+    return JSON.parse(rawBody) as T;
+  } catch (error) {
+    throw new ApiResponseParseError(
+      response.status,
+      error instanceof Error
+        ? `API server returned invalid JSON: ${error.message}`
+        : "API server returned invalid JSON.",
+      rawBody,
+    );
+  }
+}
+
+async function parseErrorBody(
+  response: Response,
+  logResponseBody: boolean,
+): Promise<unknown> {
+  const contentType = response.headers.get("content-type") || "";
+  const text = await readResponseBody(response, logResponseBody);
+
+  if (!text.trim()) {
+    return null;
+  }
+
+  if (contentType.includes("application/json")) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  }
+
+  return text;
+}
+
+function stringifyUnknown(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) {
+    return value;
+  }
+
+  if (value && typeof value === "object") {
+    if ("msg" in value && typeof (value as { msg?: unknown }).msg === "string") {
+      return (value as { msg: string }).msg;
+    }
+    if (
+      "message" in value &&
+      typeof (value as { message?: unknown }).message === "string"
+    ) {
+      return (value as { message: string }).message;
+    }
+
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
 }
 
 function getErrorDetail(data: unknown, response: Response): string {
-  if (typeof data === "string" && data.trim()) {
-    return data;
-  }
-
   if (data && typeof data === "object" && "detail" in data) {
     const detail = (data as { detail?: unknown }).detail;
-    if (typeof detail === "string" && detail.trim()) {
-      return detail;
+    if (Array.isArray(detail)) {
+      const messages = detail
+        .map((item) => stringifyUnknown(item))
+        .filter(Boolean);
+      if (messages.length) {
+        return messages.join("; ");
+      }
     }
+
+    const detailMessage = stringifyUnknown(detail);
+    if (detailMessage) {
+      return detailMessage;
+    }
+  }
+
+  const directMessage = stringifyUnknown(data);
+  if (directMessage) {
+    return directMessage;
   }
 
   return `Request failed with status ${response.status}`;
@@ -72,10 +178,21 @@ export async function apiRequest<T>(
   path: string,
   options: RequestOptions = {},
 ): Promise<T> {
-  const { authToken, headers, body, ...rest } = options;
+  const {
+    authToken,
+    headers,
+    body,
+    logResponseBody = false,
+    timeoutMs,
+    ...rest
+  } = options;
   const resolvedPath = path.startsWith("/") ? path : `/${path}`;
   const isFormData = body instanceof FormData;
   const requestHeaders = new Headers(headers);
+  const requestTimeoutMs =
+    timeoutMs !== undefined && Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? timeoutMs
+      : API_REQUEST_TIMEOUT_MS;
 
   requestHeaders.set("Accept", "application/json");
 
@@ -101,8 +218,8 @@ export async function apiRequest<T>(
 
   const abortController = new AbortController();
   const timeoutHandle = window.setTimeout(
-    () => abortController.abort("request_timeout"),
-    API_REQUEST_TIMEOUT_MS,
+    () => abortController.abort(),
+    requestTimeoutMs,
   );
 
   let response: Response;
@@ -115,16 +232,23 @@ export async function apiRequest<T>(
     });
   } catch (error) {
     window.clearTimeout(timeoutHandle);
-    if (error instanceof DOMException && error.name === "AbortError") {
+    if (
+      abortController.signal.aborted ||
+      (error instanceof DOMException && error.name === "AbortError")
+    ) {
       throw new Error("The API request timed out.");
     }
-    throw new Error("Unable to reach the API server.");
+    throw new Error(
+      error instanceof Error && error.message
+        ? `Unable to reach the API server: ${error.message}`
+        : "Unable to reach the API server.",
+    );
   }
 
   window.clearTimeout(timeoutHandle);
 
   if (!response.ok) {
-    const errorData = await parseErrorBody(response);
+    const errorData = await parseErrorBody(response, logResponseBody);
     throw new ApiError(
       response.status,
       getErrorDetail(errorData, response),
@@ -136,5 +260,6 @@ export async function apiRequest<T>(
     return undefined as T;
   }
 
-  return response.json() as Promise<T>;
+  const rawBody = await readResponseBody(response, logResponseBody);
+  return parseJsonBody<T>(response, rawBody);
 }

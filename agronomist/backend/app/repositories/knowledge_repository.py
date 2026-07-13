@@ -46,6 +46,23 @@ class KnowledgeRepository:
         )
         return self.db.execute(statement).scalars().all()
 
+    def get_document(self, document_id: uuid.UUID) -> KnowledgeDocument | None:
+        statement = select(KnowledgeDocument).where(KnowledgeDocument.id == document_id)
+        return self.db.execute(statement).scalar_one_or_none()
+
+    def get_latest_version(
+        self,
+        *,
+        document_id: uuid.UUID,
+    ) -> KnowledgeDocumentVersion | None:
+        statement = (
+            select(KnowledgeDocumentVersion)
+            .where(KnowledgeDocumentVersion.document_id == document_id)
+            .order_by(KnowledgeDocumentVersion.version_number.desc())
+            .limit(1)
+        )
+        return self.db.execute(statement).scalar_one_or_none()
+
     def get_document_by_source_uri(
         self,
         source_uri: str,

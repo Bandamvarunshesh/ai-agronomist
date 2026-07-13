@@ -2,6 +2,14 @@ class DuplicateUserError(Exception):
     """Raised when signup uses an email or phone number that already exists."""
 
 
+class UserValidationError(Exception):
+    """Raised when account/profile input is invalid for the current user."""
+
+
+class UserPersistenceError(Exception):
+    """Raised when user account data cannot be read or saved."""
+
+
 class InvalidCredentialsError(Exception):
     """Raised when login credentials are invalid."""
 

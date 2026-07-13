@@ -18,7 +18,17 @@ from app.schemas.notification import NotificationPreferenceRead, NotificationRea
 from app.schemas.recommendation import FarmRecommendationRead
 from app.schemas.stage_advisory import StageAdvisoryRead
 from app.schemas.timeline import TimelineEventRead
-from app.schemas.user import UserCreate, UserLogin, UserRead
+from app.schemas.user import (
+    AccountSettingsRead,
+    AccountSettingsUpdate,
+    AdminUserRead,
+    PasswordChangeRequest,
+    UserCreate,
+    UserLogin,
+    UserProfileRead,
+    UserProfileUpdate,
+    UserRead,
+)
 
 __all__ = [
     "CropImageRead",
@@ -42,7 +52,13 @@ __all__ = [
     "StageAdvisoryRead",
     "TimelineEventRead",
     "Token",
+    "AccountSettingsRead",
+    "AccountSettingsUpdate",
+    "AdminUserRead",
+    "PasswordChangeRequest",
     "UserCreate",
     "UserLogin",
+    "UserProfileRead",
+    "UserProfileUpdate",
     "UserRead",
 ]

@@ -73,6 +73,54 @@ class KnowledgeService:
         except SQLAlchemyError as exc:
             raise KnowledgePersistenceError from exc
 
+    def reindex_document(self, *, document_id: uuid.UUID) -> KnowledgeDocument:
+        try:
+            document = self.repository.get_document(document_id)
+            if document is None:
+                raise KnowledgeValidationError("Knowledge document not found")
+            version = self.repository.get_latest_version(document_id=document.id)
+            if version is None:
+                raise KnowledgeValidationError("Knowledge document has no indexed version")
+
+            self.repository.deactivate_chunks(document_id=document.id)
+            document.status = "active"
+            self._index_chunks(
+                document=document,
+                version=version,
+                text=version.extracted_text,
+            )
+            self.db.commit()
+            self.db.refresh(document)
+            knowledge_search_cache.clear()
+            return document
+        except KnowledgeValidationError:
+            self.db.rollback()
+            raise
+        except KnowledgeEmbeddingError:
+            self.db.rollback()
+            raise
+        except SQLAlchemyError as exc:
+            self.db.rollback()
+            raise KnowledgePersistenceError from exc
+
+    def soft_delete_document(self, *, document_id: uuid.UUID) -> KnowledgeDocument:
+        try:
+            document = self.repository.get_document(document_id)
+            if document is None:
+                raise KnowledgeValidationError("Knowledge document not found")
+            document.status = "deleted"
+            self.repository.deactivate_chunks(document_id=document.id)
+            self.db.commit()
+            self.db.refresh(document)
+            knowledge_search_cache.clear()
+            return document
+        except KnowledgeValidationError:
+            self.db.rollback()
+            raise
+        except SQLAlchemyError as exc:
+            self.db.rollback()
+            raise KnowledgePersistenceError from exc
+
     def ingest_path(
         self,
         *,

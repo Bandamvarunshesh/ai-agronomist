@@ -126,6 +126,21 @@ class EscalationRepository:
         )
         return self.db.execute(statement).scalars().all()
 
+    def list_escalations(
+        self,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> Sequence[Escalation]:
+        statement = (
+            select(Escalation)
+            .options(joinedload(Escalation.contact))
+            .order_by(Escalation.escalated_at.desc(), Escalation.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        return self.db.execute(statement).scalars().all()
+
     def get_diagnosis_for_farm_user(
         self,
         *,

@@ -57,7 +57,10 @@ class Farm(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     irrigation_type: Mapped[Optional[str]] = mapped_column(String(100))
     sowing_date: Mapped[Optional[date]] = mapped_column(Date)
 
-    owner: Mapped["User"] = relationship(back_populates="farms")
+    owner: Mapped["User"] = relationship(
+        back_populates="farms",
+        foreign_keys=[user_id],
+    )
     fertilizer_history: Mapped[list["FertilizerHistory"]] = relationship(
         back_populates="farm",
         cascade="all, delete-orphan",

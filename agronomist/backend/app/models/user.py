@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import Optional
+import uuid
+from typing import Any, Optional
 
-from sqlalchemy import Boolean, CheckConstraint, String, text
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, String, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -20,6 +22,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     email: Mapped[Optional[str]] = mapped_column(String(255), unique=True, index=True)
     phone_number: Mapped[Optional[str]] = mapped_column(String(32), unique=True, index=True)
     full_name: Mapped[Optional[str]] = mapped_column(String(255))
+    profile_picture_url: Mapped[Optional[str]] = mapped_column(String(1024))
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     preferred_language: Mapped[str] = mapped_column(
         String(16),
@@ -39,8 +42,23 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default=True,
         server_default=text("true"),
     )
+    default_state: Mapped[Optional[str]] = mapped_column(String(100))
+    default_district: Mapped[Optional[str]] = mapped_column(String(100))
+    default_farm_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("farms.id", ondelete="SET NULL"),
+        index=True,
+    )
+    account_settings: Mapped[dict[str, Any]] = mapped_column(
+        "settings",
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
 
     farms: Mapped[list["Farm"]] = relationship(
+        foreign_keys="Farm.user_id",
         back_populates="owner",
         cascade="all, delete-orphan",
         passive_deletes=True,

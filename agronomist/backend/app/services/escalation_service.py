@@ -82,6 +82,17 @@ class EscalationService:
         except SQLAlchemyError as exc:
             raise EscalationPersistenceError from exc
 
+    def list_all_escalations(
+        self,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> Sequence[Escalation]:
+        try:
+            return self.repository.list_escalations(skip=skip, limit=limit)
+        except SQLAlchemyError as exc:
+            raise EscalationPersistenceError from exc
+
     def create_escalation(
         self,
         *,

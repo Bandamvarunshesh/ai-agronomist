@@ -183,6 +183,59 @@ def list_knowledge_documents(
         )
 
 
+@router.post(
+    "/admin/knowledge/documents/{document_id}/reindex",
+    response_model=KnowledgeDocumentRead,
+)
+def reindex_knowledge_document(
+    document_id: uuid.UUID,
+    current_user: User = Depends(get_current_admin),
+    knowledge_service: KnowledgeService = Depends(get_knowledge_service),
+) -> KnowledgeDocumentRead:
+    del current_user
+    try:
+        return knowledge_service.reindex_document(document_id=document_id)
+    except KnowledgeValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        )
+    except KnowledgeEmbeddingError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Unable to generate document embeddings",
+        )
+    except KnowledgePersistenceError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to re-index knowledge document",
+        )
+
+
+@router.delete(
+    "/admin/knowledge/documents/{document_id}",
+    response_model=KnowledgeDocumentRead,
+)
+def soft_delete_knowledge_document(
+    document_id: uuid.UUID,
+    current_user: User = Depends(get_current_admin),
+    knowledge_service: KnowledgeService = Depends(get_knowledge_service),
+) -> KnowledgeDocumentRead:
+    del current_user
+    try:
+        return knowledge_service.soft_delete_document(document_id=document_id)
+    except KnowledgeValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        )
+    except KnowledgePersistenceError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to delete knowledge document",
+        )
+
+
 @router.post("/knowledge/search", response_model=KnowledgeSearchResponse)
 def search_knowledge(
     search_in: KnowledgeSearchRequest,

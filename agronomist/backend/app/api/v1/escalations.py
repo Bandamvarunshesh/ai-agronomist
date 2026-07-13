@@ -136,6 +136,23 @@ def get_escalations(
         )
 
 
+@router.get("/admin/escalations", response_model=list[EscalationRead])
+def get_admin_escalations(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=100),
+    current_user: User = Depends(get_current_admin),
+    escalation_service: EscalationService = Depends(get_escalation_service),
+) -> list[EscalationRead]:
+    del current_user
+    try:
+        return list(escalation_service.list_all_escalations(skip=skip, limit=limit))
+    except EscalationPersistenceError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to fetch escalations",
+        )
+
+
 @router.post(
     "/admin/escalation-contacts",
     response_model=EscalationContactRead,

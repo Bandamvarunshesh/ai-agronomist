@@ -7,10 +7,11 @@ import {
   type PropsWithChildren,
 } from "react";
 
-type Theme = "light" | "dark";
+type Theme = "light" | "dark" | "system";
 
 type ThemeContextValue = {
   theme: Theme;
+  setTheme: (theme: Theme) => void;
   toggleTheme: () => void;
 };
 
@@ -20,28 +21,34 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 function resolveInitialTheme(): Theme {
   const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
-  if (storedTheme === "light" || storedTheme === "dark") {
+  if (storedTheme === "light" || storedTheme === "dark" || storedTheme === "system") {
     return storedTheme;
   }
 
-  return window.matchMedia("(prefers-color-scheme: dark)").matches
-    ? "dark"
-    : "light";
+  return "system";
+}
+
+function resolveAppliedTheme(theme: Theme): "light" | "dark" {
+  if (theme !== "system") {
+    return theme;
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 export function ThemeProvider({ children }: PropsWithChildren) {
   const [theme, setTheme] = useState<Theme>(resolveInitialTheme);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+    document.documentElement.dataset.theme = resolveAppliedTheme(theme);
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
   const value = useMemo<ThemeContextValue>(
     () => ({
       theme,
+      setTheme,
       toggleTheme: () => {
-        setTheme((current) => (current === "light" ? "dark" : "light"));
+        setTheme((current) => (resolveAppliedTheme(current) === "light" ? "dark" : "light"));
       },
     }),
     [theme],

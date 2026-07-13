@@ -35,3 +35,56 @@ export function InlineAlert({
     </div>
   );
 }
+
+export function PageSkeleton({
+  title = "Loading",
+  lines = 3,
+}: {
+  title?: string;
+  lines?: number;
+}) {
+  return (
+    <article className="surface-card skeleton-card" aria-busy="true">
+      <div className="skeleton-line skeleton-title" />
+      <div className="eyebrow">{title}</div>
+      {Array.from({ length: lines }).map((_, index) => (
+        <div className="skeleton-line" key={index} />
+      ))}
+    </article>
+  );
+}
+
+export function EmptyState({
+  eyebrow = "Empty",
+  title,
+  message,
+  action,
+}: {
+  eyebrow?: string;
+  title: string;
+  message: string;
+  action?: ReactNode;
+}) {
+  return (
+    <article className="surface-card empty-state">
+      <div className="eyebrow">{eyebrow}</div>
+      <h3 className="surface-title">{title}</h3>
+      <p className="surface-copy">{message}</p>
+      {action ? <div className="button-row">{action}</div> : null}
+    </article>
+  );
+}
+
+export function PermissionDeniedState({
+  message = "You do not have permission to view this page.",
+}: {
+  message?: string;
+}) {
+  return (
+    <InlineAlert
+      title="Permission denied"
+      message={message}
+      tone="warning"
+    />
+  );
+}

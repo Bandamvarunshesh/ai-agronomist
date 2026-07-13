@@ -36,6 +36,38 @@ export function FarmIntelligenceNav({
         className={({ isActive }) =>
           isActive ? "subnav-link subnav-link-active" : "subnav-link"
         }
+        to={`/app/farms/${farmId}/advisories`}
+      >
+        Advisories
+      </NavLink>
+      <NavLink
+        className={({ isActive }) =>
+          isActive ? "subnav-link subnav-link-active" : "subnav-link"
+        }
+        to={`/app/farms/${farmId}/news`}
+      >
+        News
+      </NavLink>
+      <NavLink
+        className={({ isActive }) =>
+          isActive ? "subnav-link subnav-link-active" : "subnav-link"
+        }
+        to={`/app/farms/${farmId}/market`}
+      >
+        Market
+      </NavLink>
+      <NavLink
+        className={({ isActive }) =>
+          isActive ? "subnav-link subnav-link-active" : "subnav-link"
+        }
+        to={`/app/farms/${farmId}/soil`}
+      >
+        Soil
+      </NavLink>
+      <NavLink
+        className={({ isActive }) =>
+          isActive ? "subnav-link subnav-link-active" : "subnav-link"
+        }
         to={`/app/farms/${farmId}/recommendations`}
       >
         Recommendations

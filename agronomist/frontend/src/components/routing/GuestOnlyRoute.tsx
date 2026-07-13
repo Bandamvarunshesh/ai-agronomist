@@ -16,7 +16,15 @@ export function GuestOnlyRoute() {
   }
 
   if (state.status === "authenticated") {
-    return <Navigate to="/app" replace />;
+    if (!state.user) {
+      return (
+        <FullPageLoader
+          title="Opening workspace"
+          message="Loading your account permissions."
+        />
+      );
+    }
+    return <Navigate to={state.user.role === "admin" ? "/app/admin" : "/app"} replace />;
   }
 
   return <Outlet />;

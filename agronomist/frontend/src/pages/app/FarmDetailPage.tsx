@@ -187,6 +187,18 @@ export function FarmDetailPage() {
               <Link className="button button-ghost button-link" to={`/app/farms/${farm.id}/weather`}>
                 Weather
               </Link>
+              <Link className="button button-ghost button-link" to={`/app/farms/${farm.id}/advisories`}>
+                Advisories
+              </Link>
+              <Link className="button button-ghost button-link" to={`/app/farms/${farm.id}/news`}>
+                News
+              </Link>
+              <Link className="button button-ghost button-link" to={`/app/farms/${farm.id}/market`}>
+                Market
+              </Link>
+              <Link className="button button-ghost button-link" to={`/app/farms/${farm.id}/soil`}>
+                Soil
+              </Link>
               <Link className="button button-ghost button-link" to={`/app/farms/${farm.id}/stage-advisory`}>
                 Crop stage
               </Link>

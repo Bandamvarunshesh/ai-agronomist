@@ -196,8 +196,90 @@ export type EscalationCreateInput = {
   description?: string | null;
 };
 
+export type GovernmentAdvisory = {
+  source_name: string;
+  title: string;
+  summary: string | null;
+  category: string | null;
+  url: string;
+  published_at: string | null;
+  crop_tags: string[];
+  state_tags: string[];
+  district_tags: string[];
+  relevance_score: number;
+  metadata: Record<string, unknown>;
+};
+
+export type FarmNewsItem = GovernmentAdvisory;
+
+export type MarketIntelligence = {
+  source_name: string;
+  crop: string;
+  market: string;
+  district: string | null;
+  state: string | null;
+  price: number | null;
+  arrivals: number | null;
+  trend: string | null;
+  unit: string | null;
+  observed_at: string | null;
+  metadata: Record<string, unknown>;
+};
+
+export type SoilIntelligence = {
+  source_name: string;
+  soil_type: string | null;
+  ph: number | null;
+  organic_carbon: number | null;
+  nutrient_estimates: Record<string, string | number | null>;
+  texture: string | null;
+  observed_at: string | null;
+  metadata: Record<string, unknown>;
+};
+
+export type FarmIntelligenceResponse = {
+  farm_id: string;
+  farm_name: string;
+  crop: string;
+  market?: MarketIntelligence[];
+  government_advisories?: GovernmentAdvisory[];
+  news?: FarmNewsItem[];
+  soil?: SoilIntelligence | null;
+  provider_health: Array<Record<string, unknown>>;
+  unavailable: Record<string, string>;
+  generated_at: string;
+};
+
 export async function getStageAdvisory(authToken: string, farmId: string) {
   return apiRequest<StageAdvisory>(`/farms/${farmId}/stage-advisory`, {
+    method: "GET",
+    authToken,
+  });
+}
+
+export async function getFarmAdvisories(authToken: string, farmId: string) {
+  return apiRequest<FarmIntelligenceResponse>(`/farms/${farmId}/advisories`, {
+    method: "GET",
+    authToken,
+  });
+}
+
+export async function getFarmNews(authToken: string, farmId: string) {
+  return apiRequest<FarmIntelligenceResponse>(`/farms/${farmId}/news`, {
+    method: "GET",
+    authToken,
+  });
+}
+
+export async function getFarmMarket(authToken: string, farmId: string) {
+  return apiRequest<FarmIntelligenceResponse>(`/farms/${farmId}/market`, {
+    method: "GET",
+    authToken,
+  });
+}
+
+export async function getFarmSoil(authToken: string, farmId: string) {
+  return apiRequest<FarmIntelligenceResponse>(`/farms/${farmId}/soil`, {
     method: "GET",
     authToken,
   });

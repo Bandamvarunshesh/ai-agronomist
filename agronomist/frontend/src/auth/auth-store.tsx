@@ -15,9 +15,14 @@ export type AuthUser = {
   email: string | null;
   phone_number: string | null;
   full_name: string | null;
+  profile_picture_url?: string | null;
   preferred_language: string;
   role: string;
   is_active: boolean;
+  default_state?: string | null;
+  default_district?: string | null;
+  default_farm_id?: string | null;
+  account_settings?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 };
@@ -230,48 +235,17 @@ export function AuthProvider({ children }: PropsWithChildren) {
         const tokenPersistenceStartedAt = performance.now();
         storeToken(accessToken);
         logAuthTiming("token persistence", tokenPersistenceStartedAt);
+        const currentUserStartedAt = performance.now();
+        const user = await fetchCurrentUser(accessToken);
+        logAuthTiming("current-user request", currentUserStartedAt);
         setState({
           status: "authenticated",
           token: accessToken,
-          user: null,
+          user,
           error: null,
           notice: null,
           isSubmitting: false,
         });
-
-        void (async () => {
-          try {
-            const currentUserStartedAt = performance.now();
-            const user = await fetchCurrentUser(accessToken);
-            logAuthTiming("current-user request", currentUserStartedAt);
-            setState((current) =>
-              current.token === accessToken
-                ? {
-                    ...current,
-                    user,
-                    error: null,
-                    notice: null,
-                    isSubmitting: false,
-                  }
-                : current,
-            );
-          } catch (error) {
-            if (import.meta.env.DEV) {
-              console.error("Current-user request failed after login", error);
-            }
-            setState((current) =>
-              current.token === accessToken
-                ? {
-                    ...current,
-                    error:
-                      error instanceof Error
-                        ? error.message
-                        : "Unable to load the current user.",
-                  }
-                : current,
-            );
-          }
-        })();
       } catch (error) {
         clearStoredToken();
         setState({

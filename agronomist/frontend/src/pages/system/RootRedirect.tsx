@@ -15,5 +15,9 @@ export function RootRedirect() {
     );
   }
 
-  return <Navigate to={state.status === "authenticated" ? "/app" : "/login"} replace />;
+  if (state.status === "authenticated") {
+    return <Navigate to={state.user?.role === "admin" ? "/app/admin" : "/app"} replace />;
+  }
+
+  return <Navigate to="/login" replace />;
 }

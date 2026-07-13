@@ -21,16 +21,23 @@ export function LoginPage() {
 
   useEffect(() => {
     if (state.status === "authenticated") {
+      if (!state.user) {
+        return;
+      }
       const navigationStartedAt = performance.now();
-      navigate(redirectTarget, { replace: true });
+      const target =
+        redirectTarget === "/app" && state.user.role === "admin"
+          ? "/app/admin"
+          : redirectTarget;
+      navigate(target, { replace: true });
       if (import.meta.env.DEV) {
         console.info("[auth] dashboard navigation", {
           elapsedMs: Math.round(performance.now() - navigationStartedAt),
-          target: redirectTarget,
+          target,
         });
       }
     }
-  }, [navigate, redirectTarget, state.status]);
+  }, [navigate, redirectTarget, state.status, state.user]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
